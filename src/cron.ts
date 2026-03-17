@@ -32,7 +32,7 @@ export async function runFetch(): Promise<void> {
 }
 
 export async function startCron(): Promise<void> {
-  cron.schedule('*/10 * * * *', runFetch);
-  console.log('[Cron] Scheduled fetch every 10 minutes.');
+  cron.schedule('*/2 * * * *', runFetch);
+  console.log('[Cron] Scheduled fetch every 2 minutes.');
   runFetch().catch(console.error);
 }

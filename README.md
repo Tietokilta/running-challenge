@@ -32,6 +32,5 @@ npm run dev
 | Endpoint | Description |
 |---|---|
 | `GET /api/stats` | Returns cumulative km totals per athlete |
-| `POST /api/fetch` | Manually triggers an activity fetch |
 
-Activities are fetched automatically every 10 minutes. Only activities recorded on or after 2026-04-01 count toward the total.
+Activities are fetched every 2 minutes (within Strava's 1000 req/day rate limit). Only activities recorded on or after 2026-04-01 count toward the total.
