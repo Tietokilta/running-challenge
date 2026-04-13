@@ -15,6 +15,13 @@
       "when": 1773851013120,
       "tag": "0001_striped_vertigo",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776117725080,
+      "tag": "0002_wise_odin",
+      "breakpoints": true
     }
   ]
 }

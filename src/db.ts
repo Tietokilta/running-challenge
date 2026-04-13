@@ -29,12 +29,12 @@ export async function getSeenHashes(hashes: string[]): Promise<Set<string>> {
 }
 
 export async function recordActivitiesBatch(
-  records: Array<{ hash: string; athleteName: string; km: number; rawData?: unknown }>,
+  records: Array<{ hash: string; athleteName: string; km: number; sportType?: string; rawData?: unknown }>,
 ): Promise<void> {
   if (records.length === 0) return;
   await db
     .insert(activities)
-    .values(records.map((r) => ({ hash: r.hash, athleteName: r.athleteName, km: String(r.km), rawData: r.rawData })))
+    .values(records.map((r) => ({ hash: r.hash, athleteName: r.athleteName, km: String(r.km), sportType: r.sportType, rawData: r.rawData })))
     .onConflictDoNothing();
 }
 
@@ -46,7 +46,7 @@ export async function getStats() {
       athleteName: activities.athleteName,
       totalKm: sql<number>`SUM(${activities.km})::float`.as('total_km'),
       activityCount: sql<string>`COUNT(*)`.as('activity_count'),
-      sportType: sql<string>`${activities.rawData}->>'sport_type'`.as('sport_type'),
+      sportType: activities.sportType,
     })
     .from(activities)
     .where(and(
@@ -54,7 +54,7 @@ export async function getStats() {
       lt(activities.firstSeen, CHALLENGE_END),
       gt(activities.km, '0'),
     ))
-    .groupBy(activities.athleteName, sql`${activities.rawData}->>'sport_type'`)
+    .groupBy(activities.athleteName, activities.sportType)
     .orderBy(sql`total_km DESC`);
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
