@@ -16,7 +16,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       gap: 16px;
       padding: 32px 16px;
     }
@@ -103,6 +103,48 @@
       margin-bottom: 8px;
     }
 
+    .search-input {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 4px;
+      background: rgba(255,255,255,0.1);
+      color: white;
+      font-size: 0.85rem;
+      outline: none;
+      margin-bottom: 10px;
+    }
+
+    .search-input::placeholder { color: rgba(255,255,255,0.5); }
+    .search-input:focus { border-color: rgba(255,255,255,0.6); }
+
+    .category-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+
+    .category-tab {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: white;
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      opacity: 0.7;
+      transition: opacity 0.15s, background 0.15s;
+    }
+
+    .category-tab:hover { opacity: 0.9; }
+
+    .category-tab.active {
+      background: rgba(255,255,255,0.35);
+      opacity: 1;
+      font-weight: 600;
+    }
+
     .athlete-row {
       display: flex;
       justify-content: space-between;
@@ -113,6 +155,17 @@
     }
 
     .athlete-row:last-child { border-bottom: none; }
+
+    .athlete-index {
+      opacity: 0.5;
+      font-size: 0.8rem;
+      min-width: 2ch;
+      text-align: right;
+      margin-right: 8px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .athlete-name { flex: 1; }
 
     .athlete-km {
       font-weight: 700;
@@ -139,6 +192,8 @@
   <div class="updated" id="updated"></div>
   <div class="leaderboard" id="leaderboard" style="display:none">
     <div class="leaderboard-title">Leaderboard</div>
+    <input type="text" class="search-input" id="search" placeholder="Search athletes...">
+    <div class="category-tabs" id="category-tabs"></div>
     <div id="athlete-list"></div>
   </div>
 
@@ -170,14 +225,43 @@
         }
 
         if (data.athletes && data.athletes.length > 0) {
+          const tabs = document.getElementById('category-tabs');
           const list = document.getElementById('athlete-list');
-          for (const a of data.athletes) {
-            const row = document.createElement('div');
-            row.className = 'athlete-row';
-            row.innerHTML =
-              `<span>${a.name}</span><span class="athlete-km">${fmt(a.totalKm)} km</span>`;
-            list.appendChild(row);
+          const search = document.getElementById('search');
+          let currentAthletes = data.athletes;
+
+          function renderAthletes(athletes) {
+            const query = search.value.trim().toLowerCase();
+            list.innerHTML = '';
+            athletes.forEach((a, i) => {
+              if (query && !a.name.toLowerCase().includes(query)) return;
+              const row = document.createElement('div');
+              row.className = 'athlete-row';
+              row.innerHTML =
+                `<span class="athlete-index">${i + 1}</span>` +
+                `<span class="athlete-name">${a.name}</span>` +
+                `<span class="athlete-km">${fmt(a.totalKm)} km</span>`;
+              list.appendChild(row);
+            });
           }
+
+          for (const cat of data.categories) {
+            const btn = document.createElement('button');
+            btn.className = 'category-tab';
+            btn.textContent = cat.name;
+            btn.addEventListener('click', () => {
+              tabs.querySelectorAll('.category-tab').forEach((b) => b.classList.remove('active'));
+              btn.classList.add('active');
+              currentAthletes = cat.athletes;
+              renderAthletes(currentAthletes);
+            });
+            tabs.appendChild(btn);
+          }
+
+          search.addEventListener('input', () => renderAthletes(currentAthletes));
+
+          tabs.firstChild.classList.add('active');
+          renderAthletes(data.athletes);
           document.getElementById('leaderboard').style.display = 'block';
         }
       })

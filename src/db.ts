@@ -38,41 +38,69 @@ export async function recordActivitiesBatch(
     .onConflictDoNothing();
 }
 
-import { CHALLENGE_START, CHALLENGE_END } from './constants';
+import { ACTIVITY_CATEGORIES, CHALLENGE_START, CHALLENGE_END } from './constants';
 
 export async function getStats() {
-  const where = and(
-    gte(activities.firstSeen, CHALLENGE_START),
-    lt(activities.firstSeen, CHALLENGE_END),
-    gt(activities.km, '0'),
-  );
+  const statsRows = await db
+    .select({
+      athleteName: activities.athleteName,
+      totalKm: sql<number>`SUM(${activities.km})::float`.as('total_km'),
+      activityCount: sql<string>`COUNT(*)`.as('activity_count'),
+      sportType: sql<string>`${activities.rawData}->>'sport_type'`.as('sport_type'),
+    })
+    .from(activities)
+    .where(and(
+      gte(activities.firstSeen, CHALLENGE_START),
+      lt(activities.firstSeen, CHALLENGE_END),
+      gt(activities.km, '0'),
+    ))
+    .groupBy(activities.athleteName, sql`${activities.rawData}->>'sport_type'`)
+    .orderBy(sql`total_km DESC`);
 
-  const [statsRows, lastRows] = await Promise.all([
-    db
-      .select({
-        athleteName: activities.athleteName,
-        totalKm: sql<number>`SUM(${activities.km})::float`.as('total_km'),
-        activityCount: sql<string>`COUNT(*)`.as('activity_count'),
-      })
-      .from(activities)
-      .where(where)
-      .groupBy(activities.athleteName)
-      .orderBy(sql`total_km DESC`),
-    db
-      .select({ lastUpdated: max(activities.firstSeen) })
-      .from(activities)
-      .where(where),
-  ]);
+  const round2 = (n: number) => Math.round(n * 100) / 100;
 
-  const grandTotalKm = statsRows.reduce((sum, r) => sum + r.totalKm, 0);
+  const categoryMap = new Map<string, Map<string, { totalKm: number; activities: number }>>();
+  const allAthletesMap = new Map<string, { totalKm: number; activities: number }>();
+
+  for (const r of statsRows) {
+    const category = ACTIVITY_CATEGORIES[r.sportType || ''] || 'Other';
+    const count = Number(r.activityCount);
+
+    if (!categoryMap.has(category))
+      categoryMap.set(category, new Map());
+    const catAthletes = categoryMap.get(category)!;
+    const existing = catAthletes.get(r.athleteName) ?? { totalKm: 0, activities: 0 };
+    catAthletes.set(r.athleteName, {
+      totalKm: existing.totalKm + r.totalKm,
+      activities: existing.activities + count,
+    });
+
+    const overall = allAthletesMap.get(r.athleteName) ?? { totalKm: 0, activities: 0 };
+    allAthletesMap.set(r.athleteName, {
+      totalKm: overall.totalKm + r.totalKm,
+      activities: overall.activities + count,
+    });
+  }
+
+  const toSortedList = (m: Map<string, { totalKm: number; activities: number }>) =>
+    [...m.entries()]
+      .map(([name, v]) => ({ name, totalKm: round2(v.totalKm), activities: v.activities }))
+      .sort((a, b) => b.totalKm - a.totalKm);
+
+  const allAthletes = toSortedList(allAthletesMap);
+  const grandTotalKm = allAthletes.reduce((s, a) => s + a.totalKm, 0);
+
+  const categoryOrder = ['Running', 'Walking', 'Cycling', 'Winter Sports', 'Water Sports', 'Gym & Fitness', 'Other'];
+  const categories = [
+    { name: 'All', athletes: allAthletes },
+    ...categoryOrder
+      .filter((cat) => categoryMap.has(cat))
+      .map((cat) => ({ name: cat, athletes: toSortedList(categoryMap.get(cat)!) })),
+  ];
 
   return {
-    grandTotalKm: Math.round(grandTotalKm * 100) / 100,
-    lastUpdated: lastRows[0]?.lastUpdated ?? null,
-    athletes: statsRows.map((r) => ({
-      name: r.athleteName,
-      totalKm: Math.round(r.totalKm * 100) / 100,
-      activities: Number(r.activityCount),
-    })),
+    grandTotalKm: round2(grandTotalKm),
+    athletes: allAthletes,
+    categories,
   };
 }
