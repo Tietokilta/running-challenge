@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { inArray, gt, gte, lt, and, max, sql } from 'drizzle-orm';
+import { inArray, gt, gte, lt, and, sql } from 'drizzle-orm';
 import { activities } from './schema';
 
 const pool = new Pool({
