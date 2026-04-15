@@ -37,14 +37,4 @@ export const ACTIVITY_CATEGORIES: Record<string, string> = {
   Surfing: 'Water Sports',
   Kitesurf: 'Water Sports',
   Windsurf: 'Water Sports',
-  // Gym & Fitness
-  WeightTraining: 'Gym & Fitness',
-  Crossfit: 'Gym & Fitness',
-  HighIntensityIntervalTraining: 'Gym & Fitness',
-  Workout: 'Gym & Fitness',
-  Yoga: 'Gym & Fitness',
-  Pilates: 'Gym & Fitness',
-  Elliptical: 'Gym & Fitness',
-  StairStepper: 'Gym & Fitness',
-  RockClimbing: 'Gym & Fitness',
 };
