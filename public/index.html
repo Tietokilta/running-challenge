@@ -67,11 +67,12 @@
     }
 
     .progress-bar-bg {
+      position: relative;
       width: 100%;
       height: 12px;
       background: rgba(255,255,255,0.25);
       border-radius: 6px;
-      overflow: hidden;
+      overflow: visible;
     }
 
     .progress-bar-fill {
@@ -80,6 +81,25 @@
       border-radius: 6px;
       width: 0%;
       transition: width 1s ease;
+    }
+
+    .goal-marker {
+      position: absolute;
+      top: -4px;
+      bottom: -4px;
+      width: 2px;
+      background: rgba(255,255,255,0.7);
+      border-radius: 1px;
+    }
+
+    .goal-extended-banner {
+      width: min(480px, 90vw);
+      background: rgba(255,255,255,0.15);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 0.82rem;
+      text-align: center;
+      line-height: 1.4;
     }
 
     .progress-label {
@@ -183,11 +203,15 @@
   <div class="progress-wrap">
     <div class="progress-bar-bg">
       <div class="progress-bar-fill" id="progress-fill"></div>
+      <div class="goal-marker" style="left: 60%"></div>
     </div>
     <div class="progress-label">
-      <span id="progress-text">0 / 30 000 km</span>
+      <span id="progress-text">0 / 50 000 km</span>
       <span id="progress-pct">0 %</span>
     </div>
+  </div>
+  <div class="goal-extended-banner" id="goal-banner" style="display: none">
+    30 000 km completed! Can we hit 50 000 km next?
   </div>
   <div class="updated" id="updated"></div>
   <div class="leaderboard" id="leaderboard" style="display:none">
@@ -198,7 +222,7 @@
   </div>
 
   <script>
-    const GOAL = 30000;
+    const GOAL = 50000;
     const fmt = (n, d = 1) =>
       n.toLocaleString('fi-FI', { minimumFractionDigits: d, maximumFractionDigits: d });
 
@@ -216,8 +240,12 @@
 
         const pct = Math.min((total / GOAL) * 100, 100);
         document.getElementById('progress-fill').style.width = pct + '%';
-        document.getElementById('progress-text').textContent = fmt(total) + ' / 30 000 km';
+        document.getElementById('progress-text').textContent = fmt(total) + ' / 50 000 km';
         document.getElementById('progress-pct').textContent = fmt(pct) + ' %';
+
+        if (total >= 30000) {
+          document.getElementById('goal-banner').style.display = 'block';
+        }
 
         if (data.lastFetchAttempt) {
           document.getElementById('updated').textContent =
