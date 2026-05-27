@@ -92,16 +92,6 @@
       border-radius: 1px;
     }
 
-    .goal-extended-banner {
-      width: min(480px, 90vw);
-      background: rgba(255,255,255,0.15);
-      border-radius: 6px;
-      padding: 8px 12px;
-      font-size: 0.82rem;
-      text-align: center;
-      line-height: 1.4;
-    }
-
     .progress-label {
       display: flex;
       justify-content: space-between;
@@ -210,9 +200,6 @@
       <span id="progress-pct">0 %</span>
     </div>
   </div>
-  <div class="goal-extended-banner" id="goal-banner" style="display: none">
-    30 000 km completed! Can we hit 50 000 km next?
-  </div>
   <div class="updated" id="updated"></div>
   <div class="leaderboard" id="leaderboard" style="display:none">
     <div class="leaderboard-title">Leaderboard</div>
@@ -242,10 +229,6 @@
         document.getElementById('progress-fill').style.width = pct + '%';
         document.getElementById('progress-text').textContent = fmt(total) + ' / 50 000 km';
         document.getElementById('progress-pct').textContent = fmt(pct) + ' %';
-
-        if (total >= 30000) {
-          document.getElementById('goal-banner').style.display = 'block';
-        }
 
         if (data.lastFetchAttempt) {
           document.getElementById('updated').textContent =
