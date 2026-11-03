@@ -85,7 +85,7 @@ export async function listAthletes(): Promise<AthleteRecord[]> {
   return db.select().from(athletes);
 }
 
-/** Deletes every athlete, token and activity, including rows from the earlier club feed. */
+/** Deletes every athlete, token and activity. */
 export async function purgeAllStravaData(): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.delete(activities);
@@ -103,8 +103,6 @@ export async function getStats() {
     })
     .from(activities)
     .where(and(
-      // Club-feed rows have no start date and cannot be matched to re-imported activities,
-      // so only rows imported through athletes' own connections are counted.
       gte(activities.startDate, CHALLENGE_START),
       lt(activities.startDate, CHALLENGE_END),
       gt(activities.km, '0'),

@@ -28,8 +28,8 @@ application has none. Strava allows one subscription per application, so a devel
 instance should use its own Strava API application.
 
 Activities count toward the challenge by their Strava start time. Rows collected by the
-earlier club-feed poller cannot be matched to re-imported activities and are not counted;
-they are deleted with the rest of the Strava data after the retention period.
+earlier club-feed poller could not be linked to an athlete, so migration
+`0005_delete_club_feed_rows` deletes them.
 
 Webhook events are acknowledged immediately and processed in the background with retries
 for temporary failures. Events whose `subscription_id` is not the app's active subscription
@@ -47,7 +47,7 @@ the public leaderboard allows:
   stored, with the athlete's first name, last initial and tokens.
 - A daily job re-reads every athlete's activities and removes ones that were deleted or made
   private, in case a webhook event was missed.
-- **All Strava data, including club-feed rows, is deleted 7 days after `CHALLENGE_END`**
+- **All Strava data is deleted 7 days after `CHALLENGE_END`**
   (`RETENTION_AFTER_END_MS` in `src/sync.ts`). Set `CHALLENGE_START` and `CHALLENGE_END` for
   each challenge.
 - "Remove my data" on the front page deletes the athlete's data and revokes the app's access

@@ -11,9 +11,8 @@ export const athletes = pgTable('athletes', {
 });
 
 /**
- * Activities counted in the challenge. Rows imported through the athlete's own Strava
- * connection have `stravaActivityId`, `athleteId` and `startDate`; older rows came from
- * the club feed and only have the hash and `firstSeen`.
+ * Activities counted in the challenge, imported through the athlete's own Strava connection.
+ * Rows from the earlier club feed (no `athleteId`) were deleted by migration 0005.
  */
 export const activities = pgTable('activities', {
   hash: text('hash').primaryKey(),
