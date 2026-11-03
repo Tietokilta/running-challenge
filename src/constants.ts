@@ -1,6 +1,7 @@
-// Finnish time (EET, UTC+2) — challenge runs November 3 00:00 to January 1 00:00
-export const CHALLENGE_START = new Date('2026-11-03T00:00:00+02:00');
-export const CHALLENGE_END = new Date('2027-01-01T00:00:00+02:00');
+import { readChallengeWindow } from './challenge';
+
+// Read at startup so a missing or invalid window stops the app before the retention purge can run.
+export const { start: CHALLENGE_START, end: CHALLENGE_END } = readChallengeWindow();
 
 export const ACTIVITY_CATEGORIES: Record<string, string> = {
   // Running

@@ -48,7 +48,7 @@ the public leaderboard allows:
 - A daily job re-reads every athlete's activities and removes ones that were deleted or made
   private, in case a webhook event was missed.
 - **All Strava data, including club-feed rows, is deleted 7 days after `CHALLENGE_END`**
-  (`RETENTION_AFTER_END_MS` in `src/sync.ts`). Update the dates in `src/constants.ts` before
+  (`RETENTION_AFTER_END_MS` in `src/sync.ts`). Set `CHALLENGE_START` and `CHALLENGE_END` for
   each challenge.
 - "Remove my data" on the front page deletes the athlete's data and revokes the app's access
   after the athlete signs in to Strava; revoking access in Strava's settings has the same
@@ -72,6 +72,8 @@ get Strava's written approval for the leaderboard before launching a challenge.
 | `CLIENT_SECRET` | Strava API application client secret |
 | `PUBLIC_URL` | Public base URL of the app, e.g. `https://running.example.fi`; used for the OAuth redirect and webhook callback |
 | `STRAVA_WEBHOOK_VERIFY_TOKEN` | Random string Strava echoes back when validating the webhook subscription |
+| `CHALLENGE_START` | Required. Start of the challenge (inclusive), ISO 8601 with offset, e.g. `2026-11-03T00:00:00+02:00` |
+| `CHALLENGE_END` | Required. End of the challenge (exclusive), same format; Strava data is purged 7 days after it |
 | `PGHOST` | Postgres host |
 | `PGPORT` | Postgres port (default: 5432) |
 | `PGDATABASE` | Database name |
