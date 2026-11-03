@@ -64,18 +64,23 @@ export function createStravaRoutes(deps: StravaRoutesDeps) {
     return c.redirect(authorizeUrl(config!, state, SCOPES[intent], APPROVAL_PROMPT[intent]), 302);
   };
 
+  // Connecting publishes the athlete's data and removing deletes it, so only a form on this
+  // site may start either (CSRF protection via Origin).
+  const isSameOrigin = (c: Context) => c.req.header('origin') === new URL(config!.publicUrl).origin;
+
   // Participants must explicitly agree to their name and totals being shown publicly.
-  routes.get('/connect', (c) => {
-    if (c.req.query('consent') !== '1') {
+  routes.post('/connect', async (c) => {
+    if (!isSameOrigin(c)) return c.text('Forbidden', 403);
+    const form = await c.req.parseBody();
+    if (form.consent !== '1') {
       return c.text('Please accept that your name and kilometres are shown on the leaderboard.', 400);
     }
     if (!deps.isConnectionOpen()) return c.redirect('/?strava=closed', 302);
     return startAuthorization(c, 'connect');
   });
 
-  // Destructive, so only a form on this site may start it (CSRF protection via Origin).
   routes.post('/remove', (c) => {
-    if (c.req.header('origin') !== new URL(config!.publicUrl).origin) return c.text('Forbidden', 403);
+    if (!isSameOrigin(c)) return c.text('Forbidden', 403);
     return startAuthorization(c, 'remove');
   });
 

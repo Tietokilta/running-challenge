@@ -89,7 +89,7 @@ The Strava integration is disabled (and its routes return 503) unless `CLIENT_ID
 | Endpoint | Description |
 |---|---|
 | `GET /api/stats` | Returns cumulative km totals per athlete and category |
-| `GET /api/strava/connect?consent=1` | Starts the Strava OAuth flow |
+| `POST /api/strava/connect` | Same-origin form only, with `consent=1`; starts the Strava OAuth flow |
 | `POST /api/strava/remove` | Same-origin form only; after Strava's approval screen, deletes the athlete's data and revokes access |
 | `GET /api/strava/callback` | Strava OAuth redirect target |
 | `GET, POST /api/strava/webhook` | Strava webhook validation and events |

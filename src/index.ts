@@ -106,13 +106,28 @@ async function maintenance() {
   }
 }
 
+// setTimeout's maximum delay; a later deadline is scheduled by a daily run once it is closer.
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+let purgeTimer: NodeJS.Timeout | null = null;
+
+// The daily run alone could purge up to a day late, so the deadline gets its own timer.
+function schedulePurgeAtDeadline() {
+  const delay = RETENTION_ENDS_AT - Date.now();
+  if (purgeTimer || delay <= 0 || delay > MAX_TIMEOUT_MS) return;
+  purgeTimer = setTimeout(() => void maintenance(), delay);
+}
+
 async function main() {
   await db.runMigrations();
 
   serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`[App] Running challenge running on http://localhost:${PORT}`);
     void maintenance();
-    setInterval(maintenance, MAINTENANCE_INTERVAL_MS);
+    schedulePurgeAtDeadline();
+    setInterval(() => {
+      schedulePurgeAtDeadline();
+      void maintenance();
+    }, MAINTENANCE_INTERVAL_MS);
   });
 }
 

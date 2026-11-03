@@ -99,9 +99,10 @@ function fakeDeps(opts: {
         if (!found) throw new StravaApiError(404, 'Record Not Found');
         return found;
       },
-      listActivitiesSince: async (token) => {
+      // Like Strava, `after` is exclusive.
+      listActivitiesSince: async (token, after) => {
         usedTokens.push(token);
-        return [...remoteActivities.values()];
+        return [...remoteActivities.values()].filter((a) => a.start_date !== undefined && new Date(a.start_date) > after);
       },
     },
   };
@@ -354,4 +355,43 @@ test('a refresh rejected because another process already rotated the token keeps
   await handleWebhookEvent(event({}), f.deps);
   assert.deepEqual(f.deletedAthletes, []);
   assert.deepEqual(f.usedTokens, ['access-other']);
+});
+
+test('backfill includes an activity that starts exactly at the challenge start', async () => {
+  const f = fakeDeps({
+    athletes: [athlete()],
+    activities: { 100: activity({ start_date: '2026-04-01T00:00:00Z' }) },
+  });
+  await backfillAthlete(athlete(), f.deps);
+  assert.deepEqual(f.upserted.map((r) => r.stravaActivityId), [100]);
+});
+
+test('rotated tokens that could not be saved are reused instead of refreshing with the old token', async () => {
+  // Strava rotates the refresh token: after a successful refresh the old one is rejected.
+  let current = 'refresh-1';
+  let refreshCalls = 0;
+  const f = fakeDeps({
+    athletes: [athlete({ expiresAt: new Date(NOW.getTime() - 1000) })],
+    activities: { 100: activity() },
+    refresh: async (token) => {
+      refreshCalls++;
+      if (token !== current) throw new StravaApiError(400, REVOKED_BODY);
+      current = 'refresh-2';
+      return { accessToken: 'access-2', refreshToken: current, expiresAt: new Date(NOW.getTime() + 6 * 3600_000) };
+    },
+  });
+  const save = f.deps.saveTokens;
+  let saveFailures = 1;
+  f.deps.saveTokens = async (id, tokens) => {
+    if (saveFailures-- > 0) throw new Error('connection terminated');
+    await save(id, tokens);
+  };
+  await assert.rejects(handleWebhookEvent(event({}), f.deps), /connection terminated/);
+  // The retry reads the athlete again from the database, which still has the old token.
+  await handleWebhookEvent(event({}), f.deps);
+  assert.deepEqual(f.deletedAthletes, []);
+  assert.equal(refreshCalls, 1);
+  assert.equal(f.savedTokens.at(-1)?.tokens.refreshToken, 'refresh-2');
+  assert.deepEqual(f.usedTokens, ['access-2']);
+  assert.equal(f.upserted.length, 1);
 });

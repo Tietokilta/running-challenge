@@ -44,6 +44,13 @@ function setup(overrides: Partial<StravaRoutesDeps> = {}) {
   return { app: createStravaRoutes(deps), saved, connected, events, deauthorized, deleted };
 }
 
+const SAME_ORIGIN = { origin: 'https://running.example.fi' };
+const FORM = { 'content-type': 'application/x-www-form-urlencoded' };
+
+function connectRequest(body = 'consent=1', headers: Record<string, string> = SAME_ORIGIN): [string, RequestInit] {
+  return ['/connect', { method: 'POST', headers: { ...FORM, ...headers }, body }];
+}
+
 const REMOVE: [string, RequestInit] = [
   '/remove',
   { method: 'POST', headers: { origin: 'https://running.example.fi' } },
@@ -51,7 +58,7 @@ const REMOVE: [string, RequestInit] = [
 
 async function startConnect(
   app: ReturnType<typeof setup>['app'],
-  [path, init]: [string, RequestInit?] = ['/connect?consent=1'],
+  [path, init]: [string, RequestInit?] = connectRequest(),
 ) {
   const res = await app.request(path, init);
   const location = new URL(res.headers.get('location')!);
@@ -73,7 +80,7 @@ test('connect redirects to Strava with read scope and a state bound to a cookie'
 
 test('connect requires explicit consent to the public leaderboard', async () => {
   const { app } = setup();
-  const res = await app.request('/connect');
+  const res = await app.request(...connectRequest(''));
   assert.equal(res.status, 400);
   assert.equal(res.headers.get('location'), null);
 });
@@ -172,7 +179,7 @@ test('webhook events are acknowledged and handed off', async () => {
 
 test('routes report unavailable when Strava is not configured', async () => {
   const { app } = setup({ config: null });
-  assert.equal((await app.request('/connect?consent=1')).status, 503);
+  assert.equal((await app.request(...connectRequest())).status, 503);
 });
 
 test('removal cannot be started by another site', async () => {
@@ -185,9 +192,19 @@ test('removal cannot be started by another site', async () => {
   assert.equal(viaGet.headers.get('location'), null);
 });
 
+test('connecting cannot be started by another site, so consent comes from this page', async () => {
+  const { app } = setup();
+  const crossSite = await app.request(...connectRequest('consent=1', { origin: 'https://evil.example' }));
+  assert.equal(crossSite.status, 403);
+  const noOrigin = await app.request(...connectRequest('consent=1', {}));
+  assert.equal(noOrigin.status, 403);
+  const viaGet = await app.request('/connect?consent=1');
+  assert.equal(viaGet.headers.get('location'), null);
+});
+
 test('connecting is refused once the data retention period is over', async () => {
   const { app, saved, connected } = setup({ isConnectionOpen: () => false });
-  const res = await app.request('/connect?consent=1');
+  const res = await app.request(...connectRequest());
   assert.equal(res.headers.get('location'), '/?strava=closed');
   assert.equal(saved.length, 0);
   assert.equal(connected.length, 0);

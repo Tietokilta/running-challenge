@@ -250,7 +250,7 @@
     <span class="km" id="km">—</span>
     <span class="unit">km</span>
   </div>
-  <div class="since">April 1 - June 1, 2026</div>
+  <div class="since" id="challenge-window">&nbsp;</div>
   <div class="progress-wrap">
     <div class="progress-bar-bg">
       <div class="progress-bar-fill" id="progress-fill"></div>
@@ -264,7 +264,7 @@
   <div class="updated" id="updated"></div>
   <div class="connect">
     <div class="notice" id="notice" style="display:none"></div>
-    <form class="connect-form" action="/api/strava/connect" method="get">
+    <form class="connect-form" action="/api/strava/connect" method="post">
       <label class="consent">
         <input type="checkbox" name="consent" value="1" required>
         <span>I agree that my first name, last initial and kilometres per sport are shown publicly on this page.</span>
@@ -275,7 +275,7 @@
     </form>
     <p class="privacy">
       Only the distance, sport type and start time of your activities visible to Everyone or
-      Followers between April 1 and June 1, 2026 are stored, together with your Strava login
+      Followers <span id="privacy-window">during the challenge</span> are stored, together with your Strava login
       tokens. All Strava data is deleted 7 days after the challenge ends.
       "Remove my data" deletes it immediately and disconnects Strava after you confirm on
       Strava; revoking access in your Strava settings does the same.
@@ -312,9 +312,21 @@
       history.replaceState(null, '', location.pathname);
     }
 
+    // `until` is exclusive, so the last day shown is the day before it, in Finnish time.
+    function challengeDays(since, until) {
+      const day = (date) =>
+        date.toLocaleDateString('en-US', { timeZone: 'Europe/Helsinki', month: 'long', day: 'numeric', year: 'numeric' });
+      return [day(new Date(since)), day(new Date(new Date(until).getTime() - 1))];
+    }
+
     fetch('/api/stats')
       .then((r) => r.json())
       .then((data) => {
+        if (data.since && data.until) {
+          const [first, last] = challengeDays(data.since, data.until);
+          document.getElementById('challenge-window').textContent = first + ' – ' + last;
+          document.getElementById('privacy-window').textContent = 'between ' + first + ' and ' + last;
+        }
         if (data.error) {
           document.getElementById('km').textContent = '?';
           document.getElementById('updated').textContent = data.error;

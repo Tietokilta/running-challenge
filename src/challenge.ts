@@ -4,14 +4,29 @@ export interface ChallengeWindow {
 }
 
 // An explicit offset keeps the window independent of the server time zone.
-const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+const ISO_WITH_OFFSET =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
+/** Parses the timestamp, rejecting values like Nov 31 that `Date` would silently roll over. */
+function parseStrict(value: string): Date | null {
+  const m = ISO_WITH_OFFSET.exec(value);
+  if (!m) return null;
+  const [year, month, day, hour, minute, second = '0', offsetHour = '0', offsetMinute = '0'] = m.slice(1);
+  const local = new Date(Date.UTC(+year, +month - 1, +day, +hour, +minute, +second));
+  const exists =
+    local.getUTCFullYear() === +year &&
+    local.getUTCMonth() === +month - 1 &&
+    local.getUTCDate() === +day &&
+    local.getUTCHours() === +hour &&
+    local.getUTCMinutes() === +minute &&
+    local.getUTCSeconds() === +second;
+  if (!exists || +offsetHour > 14 || +offsetMinute > 59) return null;
+  return new Date(value);
+}
 
 function readDate(env: NodeJS.ProcessEnv, name: string): Date {
-  const value = env[name];
-  const date = value && ISO_WITH_OFFSET.test(value) ? new Date(value) : null;
-  if (!date || Number.isNaN(date.getTime())) {
-    throw new Error(`${name} must be an ISO 8601 timestamp with an offset, e.g. 2026-11-03T00:00:00+02:00`);
-  }
+  const date = parseStrict(env[name] ?? '');
+  if (!date) throw new Error(`${name} must be an ISO 8601 timestamp with an offset, e.g. 2026-11-03T00:00:00+02:00`);
   return date;
 }
 

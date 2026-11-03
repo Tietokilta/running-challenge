@@ -95,9 +95,29 @@ function isGone(err: unknown): boolean {
 // Refreshes in progress per athlete. Strava rotates refresh tokens, so two concurrent refreshes
 // with the same token would make the second fail exactly like a revoked authorization.
 const refreshesInFlight = new WeakMap<SyncDeps, Map<number, Promise<string | null>>>();
+// Tokens Strava already rotated but that could not be stored. The old refresh token no longer
+// works, so these must be stored on the next attempt instead of refreshing again.
+const unsavedTokens = new WeakMap<SyncDeps, Map<number, TokenSet>>();
+
+function unsavedFor(deps: SyncDeps): Map<number, TokenSet> {
+  let unsaved = unsavedTokens.get(deps);
+  if (!unsaved) unsavedTokens.set(deps, (unsaved = new Map()));
+  return unsaved;
+}
+
+async function storeTokens(athlete: AthleteRecord, tokens: TokenSet, deps: SyncDeps): Promise<string> {
+  const unsaved = unsavedFor(deps);
+  unsaved.set(athlete.id, tokens);
+  await deps.saveTokens(athlete.id, tokens);
+  unsaved.delete(athlete.id);
+  Object.assign(athlete, tokens);
+  return tokens.accessToken;
+}
 
 /** Returns a usable access token, or null if the athlete has revoked access (and removes them). */
 async function accessTokenFor(athlete: AthleteRecord, deps: SyncDeps, forceRefresh = false): Promise<string | null> {
+  const unsaved = unsavedFor(deps).get(athlete.id);
+  if (unsaved) return storeTokens(athlete, unsaved, deps);
   if (!forceRefresh && athlete.expiresAt.getTime() - TOKEN_EXPIRY_MARGIN_MS > deps.now().getTime()) {
     return athlete.accessToken;
   }
@@ -113,9 +133,7 @@ async function accessTokenFor(athlete: AthleteRecord, deps: SyncDeps, forceRefre
 async function refreshAccessToken(athlete: AthleteRecord, deps: SyncDeps): Promise<string | null> {
   try {
     const tokens = await deps.strava.refreshTokens(athlete.refreshToken);
-    await deps.saveTokens(athlete.id, tokens);
-    Object.assign(athlete, tokens);
-    return tokens.accessToken;
+    return await storeTokens(athlete, tokens, deps);
   } catch (err) {
     if (!isRevoked(err)) throw err;
     // Another process may have rotated the token in the meantime; only an unchanged stored
@@ -171,7 +189,8 @@ export async function handleWebhookEvent(event: WebhookEvent, deps: SyncDeps): P
 }
 
 async function listOwnActivitiesInWindow(token: string, athlete: AthleteRecord, deps: SyncDeps) {
-  const activities = await deps.strava.listActivitiesSince(token, deps.window.start);
+  // Strava's `after` is exclusive and the window start is inclusive.
+  const activities = await deps.strava.listActivitiesSince(token, new Date(deps.window.start.getTime() - 1000));
   return activities.filter((a) => a.athlete?.id === athlete.id && isInWindow(a, deps.window));
 }
 

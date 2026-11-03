@@ -32,6 +32,13 @@ test('rejects dates without a time zone offset, which would depend on the server
   assert.throws(() => readChallengeWindow({ ...valid, CHALLENGE_END: '2027-01-01' }), /CHALLENGE_END/);
 });
 
+test('rejects calendar dates and times that do not exist instead of rolling them over', () => {
+  assert.throws(() => readChallengeWindow({ ...valid, CHALLENGE_END: '2026-11-31T00:00:00+02:00' }), /CHALLENGE_END/);
+  assert.throws(() => readChallengeWindow({ ...valid, CHALLENGE_END: '2026-12-31T24:00:00+02:00' }), /CHALLENGE_END/);
+  assert.throws(() => readChallengeWindow({ ...valid, CHALLENGE_START: '2026-02-29T00:00:00+02:00' }), /CHALLENGE_START/);
+  assert.throws(() => readChallengeWindow({ ...valid, CHALLENGE_START: '2026-11-03T00:00:00+25:00' }), /CHALLENGE_START/);
+});
+
 test('rejects an end that is not after the start', () => {
   assert.throws(
     () => readChallengeWindow({ CHALLENGE_START: valid.CHALLENGE_END, CHALLENGE_END: valid.CHALLENGE_START }),
