@@ -44,7 +44,8 @@ export interface SyncDeps {
   /** Removes the athlete and all of their activities. */
   deleteAthlete(id: number): Promise<void>;
   upsertActivity(record: ActivityRecord): Promise<void>;
-  deleteActivity(stravaActivityId: number): Promise<void>;
+  /** Deletes the activity only if it belongs to the given athlete. */
+  deleteActivity(stravaActivityId: number, athleteId: number): Promise<void>;
   listStoredActivityIds(athleteId: number): Promise<number[]>;
   listAthletes(): Promise<AthleteRecord[]>;
   /** Deletes all athletes, tokens and activities. */
@@ -133,7 +134,8 @@ export async function handleWebhookEvent(event: WebhookEvent, deps: SyncDeps): P
     activity = await deps.strava.getActivity(token, event.object_id);
   } catch (err) {
     if (!isGone(err)) throw err;
-    await deps.deleteActivity(event.object_id);
+    // Scoped to the event owner: a forged event must not delete another athlete's activity.
+    await deps.deleteActivity(event.object_id, athlete.id);
     return;
   }
 
@@ -144,7 +146,7 @@ export async function handleWebhookEvent(event: WebhookEvent, deps: SyncDeps): P
   if (isInWindow(activity, deps.window)) {
     await deps.upsertActivity(toActivityRecord(activity, athlete));
   } else {
-    await deps.deleteActivity(activity.id);
+    await deps.deleteActivity(activity.id, athlete.id);
   }
 }
 
@@ -172,7 +174,7 @@ export async function reconcileAthlete(athlete: AthleteRecord, deps: SyncDeps): 
   const own = await listOwnActivitiesInWindow(token, athlete, deps);
   const current = new Set(own.map((a) => a.id));
   for (const id of await deps.listStoredActivityIds(athlete.id)) {
-    if (!current.has(id)) await deps.deleteActivity(id);
+    if (!current.has(id)) await deps.deleteActivity(id, athlete.id);
   }
   for (const activity of own) await deps.upsertActivity(toActivityRecord(activity, athlete));
 }

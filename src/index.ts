@@ -6,7 +6,8 @@ import { cors } from 'hono/cors';
 import * as db from './db';
 import routes from './routes';
 import { CHALLENGE_END, CHALLENGE_START } from './constants';
-import { createStravaClient, readStravaConfig } from './strava';
+import { createStravaClient, isTransientError, readStravaConfig } from './strava';
+import { withRetry } from './retry';
 import { createStravaRoutes } from './strava-routes';
 import { ensureWebhookSubscription } from './subscription';
 import { backfillAthlete, handleWebhookEvent, purgeIfExpired, runMaintenance, type SyncDeps } from './sync';
@@ -36,6 +37,11 @@ const syncDeps: SyncDeps = {
 const logError = (context: string) => (err: unknown) =>
   console.error(`[Strava] ${context}:`, err instanceof Error ? err.message : err);
 
+// Webhooks are acknowledged before processing, so transient failures are retried in-process.
+// Anything still missed is picked up by the daily reconciliation.
+const retryTransient = <T>(operation: () => Promise<T>) =>
+  withRetry(operation, { delaysMs: [30_000, 120_000, 600_000], isRetryable: isTransientError });
+
 const app = new Hono();
 
 app.use('/api/stats', cors());
@@ -49,12 +55,12 @@ app.route(
     exchangeCode: strava.exchangeCode,
     saveAthlete: db.saveAthlete,
     onAthleteConnected: (athlete) => {
-      backfillAthlete(athlete, syncDeps)
+      retryTransient(() => backfillAthlete(athlete, syncDeps))
         .then((count) => console.log(`[Strava] Imported ${count} activities for athlete ${athlete.id}`))
         .catch(logError(`Importing activities for athlete ${athlete.id} failed`));
     },
     onWebhookEvent: (event) => {
-      handleWebhookEvent(event, syncDeps).catch(
+      retryTransient(() => handleWebhookEvent(event, syncDeps)).catch(
         logError(`Handling ${event.object_type} ${event.aspect_type} event ${event.object_id} failed`),
       );
     },
@@ -73,21 +79,26 @@ app.onError((err, c) => {
 
 const PORT = Number(process.env.PORT) || 3000;
 
-// Without Strava credentials only the retention purge runs; reconciling needs the API.
-const maintenance = () =>
-  (config ? runMaintenance(syncDeps) : purgeIfExpired(syncDeps, new Date())).catch(
-    logError('Daily maintenance failed'),
-  );
+// Runs even without Strava configured so the retention purge always applies; reconciling and
+// the webhook subscription need the API. Must run after the server is listening because
+// Strava validates the webhook callback while creating the subscription.
+async function maintenance() {
+  try {
+    if ((await purgeIfExpired(syncDeps, new Date())) || !config) return;
+    await ensureWebhookSubscription(config, strava);
+    await runMaintenance(syncDeps);
+  } catch (err) {
+    logError('Daily maintenance failed')(err);
+  }
+}
 
 async function main() {
   await db.runMigrations();
-  // Runs even without Strava configured so the retention purge always applies.
-  await maintenance();
-  setInterval(maintenance, MAINTENANCE_INTERVAL_MS);
 
   serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`[App] Running challenge running on http://localhost:${PORT}`);
-    if (config) void ensureWebhookSubscription(config, strava);
+    void maintenance();
+    setInterval(maintenance, MAINTENANCE_INTERVAL_MS);
   });
 }
 

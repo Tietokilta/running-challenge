@@ -10,6 +10,11 @@ export class StravaApiError extends Error {
   }
 }
 
+/** Network failures, rate limiting and Strava server errors are worth retrying. */
+export function isTransientError(err: unknown): boolean {
+  return !(err instanceof StravaApiError) || err.status === 429 || err.status >= 500;
+}
+
 export interface StravaConfig {
   clientId: string;
   clientSecret: string;

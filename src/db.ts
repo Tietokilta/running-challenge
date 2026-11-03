@@ -67,8 +67,10 @@ export async function upsertActivity(record: ActivityRecord): Promise<void> {
     .onConflictDoUpdate({ target: activities.hash, set: updatable });
 }
 
-export async function deleteActivity(stravaActivityId: number): Promise<void> {
-  await db.delete(activities).where(eq(activities.stravaActivityId, stravaActivityId));
+export async function deleteActivity(stravaActivityId: number, athleteId: number): Promise<void> {
+  await db
+    .delete(activities)
+    .where(and(eq(activities.stravaActivityId, stravaActivityId), eq(activities.athleteId, athleteId)));
 }
 
 export async function listStoredActivityIds(athleteId: number): Promise<number[]> {
@@ -92,7 +94,6 @@ export async function purgeAllStravaData(): Promise<void> {
 }
 
 export async function getStats() {
-  const countedAt = sql`COALESCE(${activities.startDate}, ${activities.firstSeen})`;
   const statsRows = await db
     .select({
       athleteName: activities.athleteName,
@@ -102,8 +103,10 @@ export async function getStats() {
     })
     .from(activities)
     .where(and(
-      gte(countedAt, CHALLENGE_START),
-      lt(countedAt, CHALLENGE_END),
+      // Club-feed rows have no start date and cannot be matched to re-imported activities,
+      // so only rows imported through athletes' own connections are counted.
+      gte(activities.startDate, CHALLENGE_START),
+      lt(activities.startDate, CHALLENGE_END),
       gt(activities.km, '0'),
     ))
     .groupBy(activities.athleteName, activities.sportType)

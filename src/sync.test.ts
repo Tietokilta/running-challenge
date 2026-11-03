@@ -52,7 +52,8 @@ function fakeDeps(opts: {
   const deletedAthletes: number[] = [];
   const savedTokens: Array<{ athleteId: number; tokens: TokenSet }> = [];
   const usedTokens: string[] = [];
-  const stored = new Set<number>();
+  // Stored activity id -> owning athlete, like the activities table.
+  const stored = new Map<number, number>();
   let purged = 0;
 
   const deps: SyncDeps = {
@@ -67,13 +68,15 @@ function fakeDeps(opts: {
     },
     upsertActivity: async (record) => {
       upserted.push(record);
-      stored.add(record.stravaActivityId);
+      stored.set(record.stravaActivityId, record.athleteId);
     },
-    deleteActivity: async (id) => {
+    deleteActivity: async (id, athleteId) => {
+      if (stored.get(id) !== athleteId) return;
       deletedActivities.push(id);
       stored.delete(id);
     },
-    listStoredActivityIds: async () => [...stored],
+    listStoredActivityIds: async (athleteId) =>
+      [...stored].filter(([, owner]) => owner === athleteId).map(([id]) => id),
     listAthletes: async () => [...athletes.values()],
     purgeAllStravaData: async () => {
       purged++;
@@ -162,6 +165,7 @@ test('expired access token is refreshed and persisted before fetching', async ()
 
 test('delete event removes the activity once Strava no longer returns it', async () => {
   const f = fakeDeps({ athletes: [athlete()] });
+  f.stored.set(100, 1);
   await handleWebhookEvent(event({ aspect_type: 'delete' }), f.deps);
   assert.deepEqual(f.deletedActivities, [100]);
 });
@@ -175,6 +179,7 @@ test('delete event for an activity that still exists keeps it', async () => {
 
 test('update that makes the activity unreadable removes it', async () => {
   const f = fakeDeps({ athletes: [athlete()] });
+  f.stored.set(100, 1);
   await handleWebhookEvent(event({ aspect_type: 'update', updates: { private: 'true' } }), f.deps);
   assert.deepEqual(f.deletedActivities, [100]);
 });
@@ -241,6 +246,7 @@ test('activities outside the challenge window are not stored, and are removed if
     athletes: [athlete()],
     activities: { 100: activity({ start_date: '2026-03-31T20:00:00Z' }) },
   });
+  f.stored.set(100, 1);
   await handleWebhookEvent(event({ aspect_type: 'update' }), f.deps);
   assert.equal(f.upserted.length, 0);
   assert.deepEqual(f.deletedActivities, [100]);
@@ -248,11 +254,12 @@ test('activities outside the challenge window are not stored, and are removed if
 
 test('reconcile removes stored activities that Strava no longer lists', async () => {
   const f = fakeDeps({ athletes: [athlete()], activities: { 100: activity() } });
-  f.stored.add(100);
-  f.stored.add(555);
+  f.stored.set(100, 1);
+  f.stored.set(555, 1);
+  f.stored.set(777, 2);
   await reconcileAthlete(athlete(), f.deps);
   assert.deepEqual(f.deletedActivities, [555]);
-  assert.deepEqual([...f.stored].sort(), [100]);
+  assert.deepEqual([...f.stored.keys()].sort(), [100, 777]);
 });
 
 test('maintenance reconciles every athlete even if one fails', async () => {
@@ -289,4 +296,13 @@ test('a rejected app credential is not mistaken for a revoked athlete', async ()
   });
   await assert.rejects(handleWebhookEvent(event({}), f.deps));
   assert.deepEqual(f.deletedAthletes, []);
+});
+
+test('a forged event cannot delete another athlete activity', async () => {
+  // Athlete 1 cannot read athlete 2's activity 200, so Strava answers 404 for athlete 1.
+  const f = fakeDeps({ athletes: [athlete({ id: 1 }), athlete({ id: 2 })] });
+  f.stored.set(200, 2);
+  await handleWebhookEvent(event({ aspect_type: 'delete', object_id: 200, owner_id: 1 }), f.deps);
+  assert.deepEqual(f.deletedActivities, []);
+  assert.equal(f.stored.get(200), 2);
 });

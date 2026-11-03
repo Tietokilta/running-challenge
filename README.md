@@ -28,7 +28,11 @@ application has none. Strava allows one subscription per application, so a devel
 instance should use its own Strava API application.
 
 Activities count toward the challenge by their Strava start time. Rows collected by the
-earlier club-feed poller have no start time and count by when they were first seen.
+earlier club-feed poller cannot be matched to re-imported activities and are not counted;
+they are deleted with the rest of the Strava data after the retention period.
+
+Webhook events are acknowledged immediately and processed in the background with retries
+for temporary failures. The daily job also re-checks the webhook subscription.
 
 ## Strava data handling
 
