@@ -3,7 +3,9 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq, gt, gte, lt, and, sql } from 'drizzle-orm';
 import { activities, athletes } from './schema';
-import { ACTIVITY_CATEGORIES, CHALLENGE_START, CHALLENGE_END } from './constants';
+import { CHALLENGE_START, CHALLENGE_END } from './constants';
+import { CATEGORY_ORDER, categoryOf } from './categories';
+import { summarizeAthlete, type AthleteStats } from './athlete-stats';
 import type { TokenSet } from './strava';
 import type { ActivityRecord, AthleteRecord } from './sync';
 
@@ -93,6 +95,24 @@ export async function purgeAllStravaData(): Promise<void> {
   });
 }
 
+export async function getAthleteStats(id: number): Promise<AthleteStats | null> {
+  const [athlete] = await db
+    .select({ name: athletes.name, connectedAt: athletes.connectedAt })
+    .from(athletes)
+    .where(eq(athletes.id, id));
+  if (!athlete) return null;
+  const rows = await db
+    .select({
+      km: sql<number>`${activities.km}::float`,
+      sportType: activities.sportType,
+      startDate: activities.startDate,
+      updatedAt: sql<Date>`COALESCE(${activities.updatedAt}, ${activities.firstSeen})`.mapWith(activities.firstSeen),
+    })
+    .from(activities)
+    .where(eq(activities.athleteId, id));
+  return summarizeAthlete(athlete, rows, { start: CHALLENGE_START, end: CHALLENGE_END });
+}
+
 export async function getStats() {
   const statsRows = await db
     .select({
@@ -116,7 +136,7 @@ export async function getStats() {
   const allAthletesMap = new Map<string, { totalKm: number; activities: number }>();
 
   for (const r of statsRows) {
-    const category = ACTIVITY_CATEGORIES[r.sportType || ''] || 'Other';
+    const category = categoryOf(r.sportType);
     const count = Number(r.activityCount);
 
     if (!categoryMap.has(category))
@@ -143,10 +163,9 @@ export async function getStats() {
   const allAthletes = toSortedList(allAthletesMap);
   const grandTotalKm = allAthletes.reduce((s, a) => s + a.totalKm, 0);
 
-  const categoryOrder = ['Running', 'Walking', 'Cycling', 'Winter Sports', 'Water Sports', 'Gym & Fitness', 'Other'];
   const categories = [
     { name: 'All', athletes: allAthletes },
-    ...categoryOrder
+    ...CATEGORY_ORDER
       .filter((cat) => categoryMap.has(cat))
       .map((cat) => ({ name: cat, athletes: toSortedList(categoryMap.get(cat)!) })),
   ];

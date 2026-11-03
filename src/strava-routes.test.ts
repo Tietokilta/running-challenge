@@ -2,12 +2,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStravaRoutes, type StravaRoutesDeps } from './strava-routes';
 import type { AthleteRecord, WebhookEvent } from './sync';
+import type { AthleteStats } from './athlete-stats';
 
 const config = {
   clientId: '123',
   clientSecret: 'secret',
   publicUrl: 'https://running.example.fi',
   webhookVerifyToken: 'verify-me',
+};
+
+const STATS: AthleteStats = {
+  name: 'Kalle A.',
+  connectedAt: '2026-11-03T10:00:00.000Z',
+  totalKm: 5,
+  countedActivities: 1,
+  categories: [{ name: 'Running', totalKm: 5, activities: 1 }],
+  recentActivities: [],
+  lastSyncedAt: null,
 };
 
 function setup(overrides: Partial<StravaRoutesDeps> = {}) {
@@ -39,6 +50,7 @@ function setup(overrides: Partial<StravaRoutesDeps> = {}) {
     },
     isConnectionOpen: () => true,
     isActiveSubscription: (id) => id === 9,
+    getAthleteStats: async (id) => (id === 42 ? STATS : null),
     ...overrides,
   };
   return { app: createStravaRoutes(deps), saved, connected, events, deauthorized, deleted };
@@ -256,4 +268,62 @@ test('a connection that closes while the Strava code is exchanged is not stored'
   assert.equal(res.headers.get('location'), '/?strava=closed');
   assert.equal(saved.length, 0);
   assert.equal(connected.length, 0);
+});
+
+const SESSION_COOKIE = 'strava_session';
+
+function cookieFrom(res: Response, name: string): string | undefined {
+  return res.headers.getSetCookie().map((c) => c.split(';')[0]).find((c) => c.startsWith(`${name}=`));
+}
+
+async function connectAndGetSession(app: ReturnType<typeof setup>['app']) {
+  const { cookie, state } = await startConnect(app);
+  const res = await app.request(`/callback?code=c&scope=read,activity:read&state=${state}`, { headers: { cookie } });
+  return cookieFrom(res, SESSION_COOKIE);
+}
+
+test('without a session the visitor is not shown as connected', async () => {
+  const { app } = setup();
+  const res = await app.request('/me');
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { connected: false });
+});
+
+test('after connecting the browser can read the athlete\'s own stats', async () => {
+  const { app } = setup();
+  const session = await connectAndGetSession(app);
+  assert.ok(session);
+  const res = await app.request('/me', { headers: { cookie: session } });
+  assert.deepEqual(await res.json(), { connected: true, ...STATS });
+});
+
+test('a forged session cookie is not accepted', async () => {
+  const { app } = setup();
+  const res = await app.request('/me', { headers: { cookie: `${SESSION_COOKIE}=42` } });
+  assert.deepEqual(await res.json(), { connected: false });
+});
+
+test('a session for an athlete whose data was removed is cleared', async () => {
+  const { app } = setup();
+  const session = await connectAndGetSession(app);
+  const removed = setup({ getAthleteStats: async () => null }).app;
+  const res = await removed.request('/me', { headers: { cookie: session! } });
+  assert.deepEqual(await res.json(), { connected: false });
+  assert.equal(cookieFrom(res, SESSION_COOKIE), `${SESSION_COOKIE}=`);
+});
+
+test('removing data clears the session', async () => {
+  const { app } = setup();
+  const { cookie, state } = await startConnect(app, REMOVE);
+  const res = await app.request(`/callback?code=c&scope=read&state=${state}`, { headers: { cookie } });
+  assert.equal(cookieFrom(res, SESSION_COOKIE), `${SESSION_COOKIE}=`);
+});
+
+test('signing out clears the session and only works from this site', async () => {
+  const { app } = setup();
+  const crossSite = await app.request('/logout', { method: 'POST', headers: { origin: 'https://evil.example' } });
+  assert.equal(crossSite.status, 403);
+  const res = await app.request('/logout', { method: 'POST', headers: SAME_ORIGIN });
+  assert.equal(res.headers.get('location'), '/');
+  assert.equal(cookieFrom(res, SESSION_COOKIE), `${SESSION_COOKIE}=`);
 });

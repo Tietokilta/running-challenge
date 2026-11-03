@@ -92,6 +92,8 @@ The Strava integration is disabled (and its routes return 503) unless `CLIENT_ID
 | `POST /api/strava/connect` | Same-origin form only, with `consent=1`; starts the Strava OAuth flow |
 | `POST /api/strava/remove` | Same-origin form only; after Strava's approval screen, deletes the athlete's data and revokes access |
 | `GET /api/strava/callback` | Strava OAuth redirect target |
+| `GET /api/strava/me` | The connected athlete's own totals and latest activities, identified by a signed session cookie set after connecting; `{ "connected": false }` otherwise |
+| `POST /api/strava/logout` | Same-origin form only; clears the session cookie in this browser |
 | `GET, POST /api/strava/webhook` | Strava webhook validation and events |
 
 ## Checks

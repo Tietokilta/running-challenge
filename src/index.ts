@@ -79,6 +79,7 @@ app.route(
     deleteAthlete: db.deleteAthlete,
     isConnectionOpen: () => Date.now() < RETENTION_ENDS_AT,
     isActiveSubscription: (id) => id === activeSubscriptionId,
+    getAthleteStats: db.getAthleteStats,
   }),
 );
 
