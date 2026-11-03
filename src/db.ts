@@ -1,8 +1,11 @@
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { inArray, gt, gte, lt, and, sql } from 'drizzle-orm';
-import { activities } from './schema';
+import { eq, gt, gte, lt, and, sql } from 'drizzle-orm';
+import { activities, athletes } from './schema';
+import { ACTIVITY_CATEGORIES, CHALLENGE_START, CHALLENGE_END } from './constants';
+import type { TokenSet } from './strava';
+import type { ActivityRecord, AthleteRecord } from './sync';
 
 const pool = new Pool({
   host: process.env.PGHOST,
@@ -12,35 +15,65 @@ const pool = new Pool({
   password: process.env.PGPASSWORD,
 });
 
-export const db = drizzle(pool, { schema: { activities } });
+export const db = drizzle(pool, { schema: { activities, athletes } });
 
 export async function runMigrations(): Promise<void> {
   await migrate(db, { migrationsFolder: './drizzle' });
   console.log('[DB] Migrations applied');
 }
 
-export async function getSeenHashes(hashes: string[]): Promise<Set<string>> {
-  if (hashes.length === 0) return new Set();
-  const rows = await db
-    .select({ hash: activities.hash })
-    .from(activities)
-    .where(inArray(activities.hash, hashes));
-  return new Set(rows.map((r) => r.hash));
+export async function findAthlete(id: number): Promise<AthleteRecord | null> {
+  const [row] = await db.select().from(athletes).where(eq(athletes.id, id));
+  return row ?? null;
 }
 
-export async function recordActivitiesBatch(
-  records: Array<{ hash: string; athleteName: string; km: number; sportType?: string; rawData?: unknown }>,
-): Promise<void> {
-  if (records.length === 0) return;
+export async function saveAthlete(athlete: AthleteRecord): Promise<void> {
+  await db
+    .insert(athletes)
+    .values(athlete)
+    .onConflictDoUpdate({
+      target: athletes.id,
+      set: {
+        name: athlete.name,
+        accessToken: athlete.accessToken,
+        refreshToken: athlete.refreshToken,
+        expiresAt: athlete.expiresAt,
+      },
+    });
+}
+
+export async function saveTokens(athleteId: number, tokens: TokenSet): Promise<void> {
+  await db.update(athletes).set(tokens).where(eq(athletes.id, athleteId));
+}
+
+/** Deletes the athlete; their activities are removed by the foreign key cascade. */
+export async function deleteAthlete(id: number): Promise<void> {
+  await db.delete(athletes).where(eq(athletes.id, id));
+}
+
+export async function upsertActivity(record: ActivityRecord): Promise<void> {
+  const updatable = {
+    stravaActivityId: record.stravaActivityId,
+    athleteId: record.athleteId,
+    athleteName: record.athleteName,
+    km: String(record.km),
+    sportType: record.sportType,
+    startDate: record.startDate,
+    rawData: record.rawData,
+    updatedAt: new Date(),
+  };
   await db
     .insert(activities)
-    .values(records.map((r) => ({ hash: r.hash, athleteName: r.athleteName, km: String(r.km), sportType: r.sportType, rawData: r.rawData })))
-    .onConflictDoNothing();
+    .values({ hash: `strava:${record.stravaActivityId}`, ...updatable })
+    .onConflictDoUpdate({ target: activities.hash, set: updatable });
 }
 
-import { ACTIVITY_CATEGORIES, CHALLENGE_START, CHALLENGE_END } from './constants';
+export async function deleteActivity(stravaActivityId: number): Promise<void> {
+  await db.delete(activities).where(eq(activities.stravaActivityId, stravaActivityId));
+}
 
 export async function getStats() {
+  const countedAt = sql`COALESCE(${activities.startDate}, ${activities.firstSeen})`;
   const statsRows = await db
     .select({
       athleteName: activities.athleteName,
@@ -50,8 +83,8 @@ export async function getStats() {
     })
     .from(activities)
     .where(and(
-      gte(activities.firstSeen, CHALLENGE_START),
-      lt(activities.firstSeen, CHALLENGE_END),
+      gte(countedAt, CHALLENGE_START),
+      lt(countedAt, CHALLENGE_END),
       gt(activities.km, '0'),
     ))
     .groupBy(activities.athleteName, activities.sportType)
@@ -98,7 +131,12 @@ export async function getStats() {
       .map((cat) => ({ name: cat, athletes: toSortedList(categoryMap.get(cat)!) })),
   ];
 
+  const [{ lastUpdated }] = await db
+    .select({ lastUpdated: sql<Date | null>`MAX(COALESCE(${activities.updatedAt}, ${activities.firstSeen}))` })
+    .from(activities);
+
   return {
+    lastUpdated: lastUpdated ? new Date(lastUpdated).toISOString() : null,
     grandTotalKm: round2(grandTotalKm),
     athletes: allAthletes,
     categories,
