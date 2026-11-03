@@ -99,14 +99,93 @@
       opacity: 0.75;
     }
 
-    .connect {
+    .card {
+      width: min(480px, 90vw);
+      background: rgba(0,0,0,0.12);
+      border-radius: 10px;
+      padding: 16px;
       display: flex;
       flex-direction: column;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      opacity: 0.75;
+    }
+
+    .connect { align-items: center; text-align: center; }
+
+    .privacy-details { font-size: 0.75rem; text-align: left; max-width: 420px; }
+    .privacy-details summary { cursor: pointer; opacity: 0.8; }
+    .privacy-details .privacy { margin-top: 6px; }
+
+    .me-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .me-name { font-size: 1.1rem; font-weight: 700; }
+
+    .me-rank { font-size: 0.85rem; opacity: 0.8; white-space: nowrap; }
+
+    .me-total {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .me-km {
+      font-size: 2.5rem;
+      font-weight: 800;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .me-sub { font-size: 0.85rem; opacity: 0.8; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    .chip {
+      background: rgba(255,255,255,0.18);
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 0.8rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .me-activity {
+      display: flex;
+      gap: 8px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.15);
+      font-size: 0.85rem;
+    }
+
+    .me-activity:last-child { border-bottom: none; }
+    .me-activity.not-counted { opacity: 0.55; }
+    .me-activity-date { min-width: 6.5em; opacity: 0.8; font-variant-numeric: tabular-nums; }
+    .me-activity-sport { flex: 1; }
+    .me-activity-km { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    .me-empty { font-size: 0.85rem; opacity: 0.85; }
+
+    .me-footer {
+      display: flex;
+      justify-content: space-between;
       align-items: center;
       gap: 8px;
-      margin-top: 8px;
-      text-align: center;
+      flex-wrap: wrap;
+      font-size: 0.75rem;
+      opacity: 0.85;
     }
+
+    .me-actions { display: flex; gap: 8px; }
 
     .connect-form {
       display: flex;
@@ -136,12 +215,7 @@
 
     .consent input { margin-top: 3px; }
 
-    .privacy {
-      font-size: 0.75rem;
-      opacity: 0.7;
-      max-width: 420px;
-      text-align: left;
-    }
+    .privacy { opacity: 0.8; }
 
     .remove-button {
       background: none;
@@ -154,6 +228,8 @@
     }
 
     .notice {
+      width: min(480px, 90vw);
+      text-align: center;
       background: rgba(255,255,255,0.2);
       padding: 8px 12px;
       border-radius: 4px;
@@ -262,8 +338,9 @@
     </div>
   </div>
   <div class="updated" id="updated"></div>
-  <div class="connect">
-    <div class="notice" id="notice" style="display:none"></div>
+  <div class="notice" id="notice" style="display:none"></div>
+  <div class="card connect" id="connect" style="display:none">
+    <div class="card-title">Join the challenge</div>
     <form class="connect-form" action="/api/strava/connect" method="post">
       <label class="consent">
         <input type="checkbox" name="consent" value="1" required>
@@ -273,16 +350,43 @@
         <img src="btn_strava_connect_with_white.svg" alt="Connect with Strava">
       </button>
     </form>
-    <p class="privacy">
-      Only the distance, sport type and start time of your activities visible to Everyone or
-      Followers <span id="privacy-window">during the challenge</span> are stored, together with your Strava login
-      tokens. All Strava data is deleted 7 days after the challenge ends.
-      "Remove my data" deletes it immediately and disconnects Strava after you confirm on
-      Strava; revoking access in your Strava settings does the same.
-    </p>
+    <details class="privacy-details">
+      <summary>What is stored?</summary>
+      <p class="privacy">
+        Only the distance, sport type and start time of your activities visible to Everyone or
+        Followers <span class="privacy-window">during the challenge</span> are stored, together with your Strava login
+        tokens. All Strava data is deleted 7 days after the challenge ends.
+        "Remove my data" deletes it immediately and disconnects Strava after you confirm on
+        Strava; revoking access in your Strava settings does the same.
+      </p>
+    </details>
     <form action="/api/strava/remove" method="post">
       <button class="remove-button" type="submit">Remove my data</button>
     </form>
+  </div>
+  <div class="card" id="me" style="display:none">
+    <div class="card-title">Your stats</div>
+    <div class="me-header">
+      <span class="me-name" id="me-name"></span>
+      <span class="me-rank" id="me-rank"></span>
+    </div>
+    <div class="me-total">
+      <span class="me-km" id="me-km"></span>
+      <span class="me-sub" id="me-count"></span>
+    </div>
+    <div class="chips" id="me-categories"></div>
+    <div id="me-activities"></div>
+    <div class="me-footer">
+      <span id="me-synced"></span>
+      <div class="me-actions">
+        <form action="/api/strava/logout" method="post">
+          <button class="remove-button" type="submit">Sign out</button>
+        </form>
+        <form action="/api/strava/remove" method="post">
+          <button class="remove-button" type="submit">Remove my data</button>
+        </form>
+      </div>
+    </div>
   </div>
   <div class="leaderboard" id="leaderboard" style="display:none">
     <div class="leaderboard-title">Leaderboard</div>
@@ -319,13 +423,77 @@
       return [day(new Date(since)), day(new Date(new Date(until).getTime() - 1))];
     }
 
-    fetch('/api/stats')
-      .then((r) => r.json())
+    const statsRequest = fetch('/api/stats').then((r) => r.json());
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    const shortDate = (iso) =>
+      new Date(iso).toLocaleDateString('fi-FI', { timeZone: 'Europe/Helsinki', day: 'numeric', month: 'numeric', weekday: 'short' });
+
+    function renderMe(me) {
+      document.getElementById('me-name').textContent = me.name;
+      document.getElementById('me-km').textContent = fmt(me.totalKm) + ' km';
+      document.getElementById('me-count').textContent =
+        me.countedActivities + (me.countedActivities === 1 ? ' activity counted' : ' activities counted');
+
+      const categories = document.getElementById('me-categories');
+      for (const cat of me.categories) {
+        categories.appendChild(el('span', 'chip', cat.name + ' ' + fmt(cat.totalKm) + ' km'));
+      }
+
+      const list = document.getElementById('me-activities');
+      if (me.recentActivities.length === 0) {
+        list.appendChild(el('p', 'me-empty',
+          'No activities yet. New activities appear within a few minutes of being uploaded to Strava. ' +
+          'Activities visible only to you are not counted.'));
+      } else {
+        list.appendChild(el('div', 'card-title', 'Latest activities'));
+        for (const a of me.recentActivities) {
+          const row = el('div', 'me-activity' + (a.counted ? '' : ' not-counted'));
+          row.appendChild(el('span', 'me-activity-date', a.startDate ? shortDate(a.startDate) : '?'));
+          row.appendChild(el('span', 'me-activity-sport', a.sportType ? a.sportType.replace(/([a-z])([A-Z])/g, '$1 $2') : a.category));
+          row.appendChild(el('span', 'me-activity-km', a.counted ? fmt(a.km) + ' km' : 'not counted'));
+          row.title = a.counted ? '' : 'Activities without distance or outside the challenge dates do not count';
+          list.appendChild(row);
+        }
+      }
+
+      document.getElementById('me-synced').textContent = me.lastSyncedAt
+        ? 'Last synced ' + new Date(me.lastSyncedAt).toLocaleString('fi-FI')
+        : 'Connected ' + new Date(me.connectedAt).toLocaleString('fi-FI');
+
+      // The leaderboard ranks by display name, so look the athlete up the same way.
+      statsRequest.then((data) => {
+        const index = (data.athletes || []).findIndex((a) => a.name === me.name);
+        if (index >= 0) {
+          document.getElementById('me-rank').textContent = '#' + (index + 1) + ' of ' + data.athletes.length;
+        }
+      }).catch(() => {});
+
+      document.getElementById('me').style.display = 'flex';
+    }
+
+    fetch('/api/strava/me', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : { connected: false }))
+      .catch(() => ({ connected: false }))
+      .then((me) => {
+        if (me.connected) renderMe(me);
+        else document.getElementById('connect').style.display = 'flex';
+      });
+
+    statsRequest
       .then((data) => {
         if (data.since && data.until) {
           const [first, last] = challengeDays(data.since, data.until);
           document.getElementById('challenge-window').textContent = first + ' – ' + last;
-          document.getElementById('privacy-window').textContent = 'between ' + first + ' and ' + last;
+          document.querySelectorAll('.privacy-window').forEach((el) => {
+            el.textContent = 'between ' + first + ' and ' + last;
+          });
         }
         if (data.error) {
           document.getElementById('km').textContent = '?';
