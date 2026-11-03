@@ -28,7 +28,7 @@ test('subscription setup is retried after a temporary failure', async () => {
     },
     { delaysMs: [1, 1], sleep: noSleep },
   );
-  assert.equal(result, 'active');
+  assert.deepEqual(result, { status: 'active', subscriptionId: 1 });
   assert.deepEqual(created, ['https://running.example.fi/api/strava/webhook']);
 });
 
@@ -47,6 +47,6 @@ test('a subscription for another URL is reported without retrying or replacing i
     },
     { delaysMs: [1, 1], sleep: noSleep },
   );
-  assert.equal(result, 'conflict');
+  assert.deepEqual(result, { status: 'conflict' });
   assert.equal(listCalls, 1);
 });

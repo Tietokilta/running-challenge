@@ -143,7 +143,15 @@
       text-align: left;
     }
 
-    .privacy a { color: white; }
+    .remove-button {
+      background: none;
+      border: 1px solid rgba(255,255,255,0.6);
+      color: white;
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
 
     .notice {
       background: rgba(255,255,255,0.2);
@@ -269,9 +277,12 @@
       Only the distance, sport type and start time of your activities visible to Everyone or
       Followers between April 1 and June 1, 2026 are stored, together with your Strava login
       tokens. All Strava data is deleted 7 days after the challenge ends.
-      <a href="/api/strava/remove">Remove my data</a> deletes it immediately and disconnects
+      "Remove my data" deletes it immediately and disconnects Strava after you confirm on
       Strava; revoking access in your Strava settings does the same.
     </p>
+    <form action="/api/strava/remove" method="post">
+      <button class="remove-button" type="submit">Remove my data</button>
+    </form>
   </div>
   <div class="leaderboard" id="leaderboard" style="display:none">
     <div class="leaderboard-title">Leaderboard</div>
@@ -290,6 +301,7 @@
       denied: 'Strava connection was cancelled.',
       'missing-scope': 'Please allow access to your activities so they can be counted.',
       removed: 'Your data has been deleted and Strava has been disconnected.',
+      closed: 'The challenge is over and its data has been deleted, so new connections are closed.',
       error: 'Something went wrong with Strava, please try again.',
     };
     const stravaStatus = new URLSearchParams(location.search).get('strava');

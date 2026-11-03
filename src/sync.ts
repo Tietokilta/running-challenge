@@ -92,20 +92,40 @@ function isGone(err: unknown): boolean {
   return err instanceof StravaApiError && err.status === 404;
 }
 
+// Refreshes in progress per athlete. Strava rotates refresh tokens, so two concurrent refreshes
+// with the same token would make the second fail exactly like a revoked authorization.
+const refreshesInFlight = new WeakMap<SyncDeps, Map<number, Promise<string | null>>>();
+
 /** Returns a usable access token, or null if the athlete has revoked access (and removes them). */
 async function accessTokenFor(athlete: AthleteRecord, deps: SyncDeps, forceRefresh = false): Promise<string | null> {
   if (!forceRefresh && athlete.expiresAt.getTime() - TOKEN_EXPIRY_MARGIN_MS > deps.now().getTime()) {
     return athlete.accessToken;
   }
+  let inFlight = refreshesInFlight.get(deps);
+  if (!inFlight) refreshesInFlight.set(deps, (inFlight = new Map()));
+  const pending = inFlight.get(athlete.id);
+  if (pending) return pending;
+  const refresh = refreshAccessToken(athlete, deps).finally(() => inFlight.delete(athlete.id));
+  inFlight.set(athlete.id, refresh);
+  return refresh;
+}
+
+async function refreshAccessToken(athlete: AthleteRecord, deps: SyncDeps): Promise<string | null> {
   try {
     const tokens = await deps.strava.refreshTokens(athlete.refreshToken);
     await deps.saveTokens(athlete.id, tokens);
-    athlete.accessToken = tokens.accessToken;
-    athlete.refreshToken = tokens.refreshToken;
-    athlete.expiresAt = tokens.expiresAt;
+    Object.assign(athlete, tokens);
     return tokens.accessToken;
   } catch (err) {
     if (!isRevoked(err)) throw err;
+    // Another process may have rotated the token in the meantime; only an unchanged stored
+    // token proves the athlete revoked access.
+    const stored = await deps.findAthlete(athlete.id);
+    if (!stored) return null;
+    if (stored.refreshToken !== athlete.refreshToken) {
+      Object.assign(athlete, stored);
+      return stored.accessToken;
+    }
     console.log(`[Sync] Athlete ${athlete.id} has revoked access, removing their data`);
     await deps.deleteAthlete(athlete.id);
     return null;

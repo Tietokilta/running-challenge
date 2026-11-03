@@ -59,9 +59,15 @@ function fakeDeps(opts: {
   const deps: SyncDeps = {
     now: () => NOW,
     window: { start: new Date('2026-04-01T00:00:00Z'), end: new Date('2026-06-01T00:00:00Z') },
-    findAthlete: async (id) => athletes.get(id) ?? null,
+    // Returns a copy, like a database read, so callers cannot share state through it.
+    findAthlete: async (id) => {
+      const found = athletes.get(id);
+      return found ? { ...found } : null;
+    },
     saveTokens: async (athleteId, tokens) => {
       savedTokens.push({ athleteId, tokens });
+      const current = athletes.get(athleteId);
+      if (current) athletes.set(athleteId, { ...current, ...tokens });
     },
     deleteAthlete: async (id) => {
       deletedAthletes.push(id);
@@ -305,4 +311,47 @@ test('a forged event cannot delete another athlete activity', async () => {
   await handleWebhookEvent(event({ aspect_type: 'delete', object_id: 200, owner_id: 1 }), f.deps);
   assert.deepEqual(f.deletedActivities, []);
   assert.equal(f.stored.get(200), 2);
+});
+
+test('concurrent events refresh an expiring token once and do not treat rotation as revocation', async () => {
+  // Strava rotates the refresh token: reusing the old one is rejected like a revoked token.
+  let current = 'refresh-1';
+  let refreshCalls = 0;
+  const f = fakeDeps({
+    athletes: [athlete({ expiresAt: new Date(NOW.getTime() - 1000) })],
+    activities: { 100: activity(), 101: activity({ id: 101 }) },
+    refresh: async (token) => {
+      refreshCalls++;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (token !== current) throw new StravaApiError(400, REVOKED_BODY);
+      current = `refresh-${refreshCalls + 1}`;
+      return { accessToken: 'access-new', refreshToken: current, expiresAt: new Date(NOW.getTime() + 6 * 3600_000) };
+    },
+  });
+  await Promise.all([
+    handleWebhookEvent(event({ object_id: 100 }), f.deps),
+    handleWebhookEvent(event({ object_id: 101 }), f.deps),
+  ]);
+  assert.deepEqual(f.deletedAthletes, []);
+  assert.equal(refreshCalls, 1);
+  assert.deepEqual(f.upserted.map((r) => r.stravaActivityId).sort(), [100, 101]);
+});
+
+test('a refresh rejected because another process already rotated the token keeps the athlete', async () => {
+  const f = fakeDeps({
+    athletes: [athlete({ expiresAt: new Date(NOW.getTime() - 1000) })],
+    activities: { 100: activity() },
+  });
+  f.deps.strava.refreshTokens = async () => {
+    // Another instance refreshed and stored new tokens just before this one tried.
+    await f.deps.saveTokens(1, {
+      accessToken: 'access-other',
+      refreshToken: 'refresh-other',
+      expiresAt: new Date(NOW.getTime() + 6 * 3600_000),
+    });
+    throw new StravaApiError(400, REVOKED_BODY);
+  };
+  await handleWebhookEvent(event({}), f.deps);
+  assert.deepEqual(f.deletedAthletes, []);
+  assert.deepEqual(f.usedTokens, ['access-other']);
 });

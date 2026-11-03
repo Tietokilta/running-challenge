@@ -32,7 +32,11 @@ earlier club-feed poller cannot be matched to re-imported activities and are not
 they are deleted with the rest of the Strava data after the retention period.
 
 Webhook events are acknowledged immediately and processed in the background with retries
-for temporary failures. The daily job also re-checks the webhook subscription.
+for temporary failures. Events whose `subscription_id` is not the app's active subscription
+are ignored, so forged events cannot spend the Strava API quota. The daily job also
+re-checks the webhook subscription. Token refreshes are serialized per athlete because
+Strava rotates refresh tokens; a rejected refresh only counts as revocation if the stored
+token is unchanged. New connections are refused once the retention period is over.
 
 ## Strava data handling
 
@@ -84,7 +88,7 @@ The Strava integration is disabled (and its routes return 503) unless `CLIENT_ID
 |---|---|
 | `GET /api/stats` | Returns cumulative km totals per athlete and category |
 | `GET /api/strava/connect?consent=1` | Starts the Strava OAuth flow |
-| `GET /api/strava/remove` | Signs the athlete in to Strava, deletes their data and revokes access |
+| `POST /api/strava/remove` | Same-origin form only; after Strava's approval screen, deletes the athlete's data and revokes access |
 | `GET /api/strava/callback` | Strava OAuth redirect target |
 | `GET, POST /api/strava/webhook` | Strava webhook validation and events |
 

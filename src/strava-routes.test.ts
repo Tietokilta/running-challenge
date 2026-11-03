@@ -37,13 +37,23 @@ function setup(overrides: Partial<StravaRoutesDeps> = {}) {
     deleteAthlete: async (id) => {
       deleted.push(id);
     },
+    isConnectionOpen: () => true,
+    isActiveSubscription: (id) => id === 9,
     ...overrides,
   };
   return { app: createStravaRoutes(deps), saved, connected, events, deauthorized, deleted };
 }
 
-async function startConnect(app: ReturnType<typeof setup>['app'], path = '/connect?consent=1') {
-  const res = await app.request(path);
+const REMOVE: [string, RequestInit] = [
+  '/remove',
+  { method: 'POST', headers: { origin: 'https://running.example.fi' } },
+];
+
+async function startConnect(
+  app: ReturnType<typeof setup>['app'],
+  [path, init]: [string, RequestInit?] = ['/connect?consent=1'],
+) {
+  const res = await app.request(path, init);
   const location = new URL(res.headers.get('location')!);
   const cookie = res.headers.get('set-cookie')!.split(';')[0];
   return { res, location, cookie, state: location.searchParams.get('state')! };
@@ -70,8 +80,10 @@ test('connect requires explicit consent to the public leaderboard', async () => 
 
 test('remove flow deletes the athlete and revokes the app without storing anything', async () => {
   const { app, saved, connected, deauthorized, deleted } = setup();
-  const { location, cookie, state } = await startConnect(app, '/remove');
+  const { location, cookie, state } = await startConnect(app, REMOVE);
   assert.equal(location.searchParams.get('scope'), 'read');
+  // Strava always shows its approval screen, so removal needs a deliberate click.
+  assert.equal(location.searchParams.get('approval_prompt'), 'force');
   const res = await app.request(`/callback?code=c&scope=read&state=${state}`, { headers: { cookie } });
   assert.equal(res.headers.get('location'), '/?strava=removed');
   assert.deepEqual(deleted, [42]);
@@ -83,7 +95,7 @@ test('remove flow deletes the athlete and revokes the app without storing anythi
 test('a connect state cannot be replayed as a remove and vice versa', async () => {
   const { app, deleted } = setup();
   const { cookie } = await startConnect(app);
-  const { state: removeState } = await startConnect(app, '/remove');
+  const { state: removeState } = await startConnect(app, REMOVE);
   const res = await app.request(`/callback?code=c&scope=read&state=${removeState}`, { headers: { cookie } });
   assert.equal(res.status, 400);
   assert.deepEqual(deleted, []);
@@ -161,4 +173,51 @@ test('webhook events are acknowledged and handed off', async () => {
 test('routes report unavailable when Strava is not configured', async () => {
   const { app } = setup({ config: null });
   assert.equal((await app.request('/connect?consent=1')).status, 503);
+});
+
+test('removal cannot be started by another site', async () => {
+  const { app } = setup();
+  const crossSite = await app.request('/remove', { method: 'POST', headers: { origin: 'https://evil.example' } });
+  assert.equal(crossSite.status, 403);
+  const noOrigin = await app.request('/remove', { method: 'POST' });
+  assert.equal(noOrigin.status, 403);
+  const viaGet = await app.request('/remove');
+  assert.equal(viaGet.headers.get('location'), null);
+});
+
+test('connecting is refused once the data retention period is over', async () => {
+  const { app, saved, connected } = setup({ isConnectionOpen: () => false });
+  const res = await app.request('/connect?consent=1');
+  assert.equal(res.headers.get('location'), '/?strava=closed');
+  assert.equal(saved.length, 0);
+  assert.equal(connected.length, 0);
+});
+
+test('a connection that closes during the Strava login is not stored', async () => {
+  let open = true;
+  const { app, saved, connected } = setup({ isConnectionOpen: () => open });
+  const { cookie, state } = await startConnect(app);
+  open = false;
+  const res = await app.request(`/callback?code=c&scope=read,activity:read&state=${state}`, { headers: { cookie } });
+  assert.equal(res.headers.get('location'), '/?strava=closed');
+  assert.equal(saved.length, 0);
+  assert.equal(connected.length, 0);
+});
+
+test('webhook events for another subscription are acknowledged but ignored', async () => {
+  const { app, events } = setup();
+  const res = await app.request('/webhook', {
+    method: 'POST',
+    body: JSON.stringify({
+      object_type: 'activity',
+      object_id: 1,
+      aspect_type: 'create',
+      owner_id: 42,
+      subscription_id: 1234,
+      event_time: 1,
+    }),
+    headers: { 'content-type': 'application/json' },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(events, []);
 });

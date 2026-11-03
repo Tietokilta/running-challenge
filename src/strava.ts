@@ -92,12 +92,17 @@ function toTokenSet(data: TokenResponse): TokenSet {
   };
 }
 
-export function authorizeUrl(config: StravaConfig, state: string, scope: string): string {
+export function authorizeUrl(
+  config: StravaConfig,
+  state: string,
+  scope: string,
+  approvalPrompt: 'auto' | 'force' = 'auto',
+): string {
   const url = new URL(`${OAUTH_BASE}/authorize`);
   url.searchParams.set('client_id', config.clientId);
   url.searchParams.set('redirect_uri', config.publicUrl + callbackPath);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('approval_prompt', 'auto');
+  url.searchParams.set('approval_prompt', approvalPrompt);
   url.searchParams.set('scope', scope);
   url.searchParams.set('state', state);
   return url.toString();

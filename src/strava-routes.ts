@@ -18,10 +18,16 @@ export interface StravaRoutesDeps {
   deauthorize(accessToken: string): Promise<void>;
   /** Removes the athlete and all of their activities. */
   deleteAthlete(id: number): Promise<void>;
+  /** False once the challenge's data retention period is over. */
+  isConnectionOpen(): boolean;
+  /** Whether webhook events with this subscription id come from our active subscription. */
+  isActiveSubscription(subscriptionId: number): boolean;
 }
 
 type Intent = 'connect' | 'remove';
 const SCOPES: Record<Intent, string> = { connect: 'activity:read', remove: 'read' };
+// Removal always shows Strava's approval screen so it cannot complete without a deliberate click.
+const APPROVAL_PROMPT: Record<Intent, 'auto' | 'force'> = { connect: 'auto', remove: 'force' };
 
 function isWebhookEvent(body: unknown): body is WebhookEvent {
   if (typeof body !== 'object' || body === null) return false;
@@ -30,6 +36,7 @@ function isWebhookEvent(body: unknown): body is WebhookEvent {
     (e.object_type === 'activity' || e.object_type === 'athlete') &&
     typeof e.object_id === 'number' &&
     typeof e.owner_id === 'number' &&
+    typeof e.subscription_id === 'number' &&
     typeof e.aspect_type === 'string'
   );
 }
@@ -54,7 +61,7 @@ export function createStravaRoutes(deps: StravaRoutesDeps) {
       sameSite: 'Lax',
       maxAge: 600,
     });
-    return c.redirect(authorizeUrl(config!, state, SCOPES[intent]), 302);
+    return c.redirect(authorizeUrl(config!, state, SCOPES[intent], APPROVAL_PROMPT[intent]), 302);
   };
 
   // Participants must explicitly agree to their name and totals being shown publicly.
@@ -62,13 +69,19 @@ export function createStravaRoutes(deps: StravaRoutesDeps) {
     if (c.req.query('consent') !== '1') {
       return c.text('Please accept that your name and kilometres are shown on the leaderboard.', 400);
     }
+    if (!deps.isConnectionOpen()) return c.redirect('/?strava=closed', 302);
     return startAuthorization(c, 'connect');
   });
 
-  routes.get('/remove', (c) => startAuthorization(c, 'remove'));
+  // Destructive, so only a form on this site may start it (CSRF protection via Origin).
+  routes.post('/remove', (c) => {
+    if (c.req.header('origin') !== new URL(config!.publicUrl).origin) return c.text('Forbidden', 403);
+    return startAuthorization(c, 'remove');
+  });
 
   const connect = async (c: Context, code: string, scopes: string[]) => {
     if (!scopes.some((s) => READ_SCOPES.includes(s))) return c.redirect('/?strava=missing-scope', 302);
+    if (!deps.isConnectionOpen()) return c.redirect('/?strava=closed', 302);
     try {
       const { tokens, athlete } = await deps.exchangeCode(code);
       const record: AthleteRecord = {
@@ -126,7 +139,9 @@ export function createStravaRoutes(deps: StravaRoutesDeps) {
   routes.post('/webhook', async (c) => {
     const body: unknown = await c.req.json().catch(() => null);
     if (!isWebhookEvent(body)) return c.text('Bad Request', 400);
-    deps.onWebhookEvent(body);
+    // Events are unauthenticated; ignoring ones without our subscription id keeps forged
+    // events from spending the app's Strava API quota. Missed events are reconciled daily.
+    if (deps.isActiveSubscription(body.subscription_id)) deps.onWebhookEvent(body);
     return c.body(null, 200);
   });
 

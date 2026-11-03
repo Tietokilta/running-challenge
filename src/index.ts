@@ -10,7 +10,14 @@ import { createStravaClient, isTransientError, readStravaConfig } from './strava
 import { withRetry } from './retry';
 import { createStravaRoutes } from './strava-routes';
 import { ensureWebhookSubscription } from './subscription';
-import { backfillAthlete, handleWebhookEvent, purgeIfExpired, runMaintenance, type SyncDeps } from './sync';
+import {
+  backfillAthlete,
+  handleWebhookEvent,
+  purgeIfExpired,
+  RETENTION_AFTER_END_MS,
+  runMaintenance,
+  type SyncDeps,
+} from './sync';
 
 const config = readStravaConfig();
 if (!config) {
@@ -19,6 +26,10 @@ if (!config) {
 const strava = createStravaClient({ clientId: config?.clientId ?? '', clientSecret: config?.clientSecret ?? '' });
 
 const MAINTENANCE_INTERVAL_MS = 24 * 3600_000;
+const RETENTION_ENDS_AT = CHALLENGE_END.getTime() + RETENTION_AFTER_END_MS;
+
+// Set once the webhook subscription is confirmed; events for other ids are ignored.
+let activeSubscriptionId: number | null = null;
 
 const syncDeps: SyncDeps = {
   now: () => new Date(),
@@ -66,6 +77,8 @@ app.route(
     },
     deauthorize: strava.deauthorize,
     deleteAthlete: db.deleteAthlete,
+    isConnectionOpen: () => Date.now() < RETENTION_ENDS_AT,
+    isActiveSubscription: (id) => id === activeSubscriptionId,
   }),
 );
 
@@ -85,7 +98,8 @@ const PORT = Number(process.env.PORT) || 3000;
 async function maintenance() {
   try {
     if ((await purgeIfExpired(syncDeps, new Date())) || !config) return;
-    await ensureWebhookSubscription(config, strava);
+    const subscription = await ensureWebhookSubscription(config, strava);
+    if (subscription.status === 'active') activeSubscriptionId = subscription.subscriptionId;
     await runMaintenance(syncDeps);
   } catch (err) {
     logError('Daily maintenance failed')(err);
