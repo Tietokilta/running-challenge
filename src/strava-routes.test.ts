@@ -238,3 +238,22 @@ test('webhook events for another subscription are acknowledged but ignored', asy
   assert.equal(res.status, 200);
   assert.deepEqual(events, []);
 });
+
+test('a connection that closes while the Strava code is exchanged is not stored', async () => {
+  let open = true;
+  const { app, saved, connected } = setup({
+    isConnectionOpen: () => open,
+    exchangeCode: async () => {
+      open = false;
+      return {
+        tokens: { accessToken: 'a', refreshToken: 'r', expiresAt: new Date('2026-04-10T18:00:00Z') },
+        athlete: { id: 42, firstname: 'Kalle', lastname: 'Ahlström' },
+      };
+    },
+  });
+  const { cookie, state } = await startConnect(app);
+  const res = await app.request(`/callback?code=c&scope=read,activity:read&state=${state}`, { headers: { cookie } });
+  assert.equal(res.headers.get('location'), '/?strava=closed');
+  assert.equal(saved.length, 0);
+  assert.equal(connected.length, 0);
+});

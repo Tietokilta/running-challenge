@@ -89,6 +89,8 @@ export function createStravaRoutes(deps: StravaRoutesDeps) {
     if (!deps.isConnectionOpen()) return c.redirect('/?strava=closed', 302);
     try {
       const { tokens, athlete } = await deps.exchangeCode(code);
+      // The retention purge may have run while the code was being exchanged.
+      if (!deps.isConnectionOpen()) return c.redirect('/?strava=closed', 302);
       const record: AthleteRecord = {
         id: athlete.id,
         name: displayName(athlete.firstname, athlete.lastname),

@@ -114,7 +114,13 @@ let purgeTimer: NodeJS.Timeout | null = null;
 function schedulePurgeAtDeadline() {
   const delay = RETENTION_ENDS_AT - Date.now();
   if (purgeTimer || delay <= 0 || delay > MAX_TIMEOUT_MS) return;
-  purgeTimer = setTimeout(() => void maintenance(), delay);
+  purgeTimer = setTimeout(() => {
+    withRetry(() => purgeIfExpired(syncDeps, new Date()), { delaysMs: [30_000, 120_000, 600_000, 1_800_000] })
+      .catch(logError('Retention purge failed'))
+      .finally(() => {
+        purgeTimer = null;
+      });
+  }, delay);
 }
 
 async function main() {
