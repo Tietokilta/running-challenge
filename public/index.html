@@ -99,6 +99,67 @@
       opacity: 0.75;
     }
 
+    .connect {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      text-align: center;
+    }
+
+    .connect-form {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .connect-button {
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .connect-button img { display: block; height: 48px; }
+
+    .consent {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      font-size: 0.85rem;
+      max-width: 420px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .consent input { margin-top: 3px; }
+
+    .privacy {
+      font-size: 0.75rem;
+      opacity: 0.7;
+      max-width: 420px;
+      text-align: left;
+    }
+
+    .remove-button {
+      background: none;
+      border: 1px solid rgba(255,255,255,0.6);
+      color: white;
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    .notice {
+      background: rgba(255,255,255,0.2);
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+
     .leaderboard {
       width: min(480px, 90vw);
       margin-top: 8px;
@@ -189,7 +250,7 @@
     <span class="km" id="km">—</span>
     <span class="unit">km</span>
   </div>
-  <div class="since">April 1 - June 1, 2026</div>
+  <div class="since" id="challenge-window">&nbsp;</div>
   <div class="progress-wrap">
     <div class="progress-bar-bg">
       <div class="progress-bar-fill" id="progress-fill"></div>
@@ -201,6 +262,28 @@
     </div>
   </div>
   <div class="updated" id="updated"></div>
+  <div class="connect">
+    <div class="notice" id="notice" style="display:none"></div>
+    <form class="connect-form" action="/api/strava/connect" method="post">
+      <label class="consent">
+        <input type="checkbox" name="consent" value="1" required>
+        <span>I agree that my first name, last initial and kilometres per sport are shown publicly on this page.</span>
+      </label>
+      <button class="connect-button" type="submit">
+        <img src="btn_strava_connect_with_white.svg" alt="Connect with Strava">
+      </button>
+    </form>
+    <p class="privacy">
+      Only the distance, sport type and start time of your activities visible to Everyone or
+      Followers <span id="privacy-window">during the challenge</span> are stored, together with your Strava login
+      tokens. All Strava data is deleted 7 days after the challenge ends.
+      "Remove my data" deletes it immediately and disconnects Strava after you confirm on
+      Strava; revoking access in your Strava settings does the same.
+    </p>
+    <form action="/api/strava/remove" method="post">
+      <button class="remove-button" type="submit">Remove my data</button>
+    </form>
+  </div>
   <div class="leaderboard" id="leaderboard" style="display:none">
     <div class="leaderboard-title">Leaderboard</div>
     <input type="text" class="search-input" id="search" placeholder="Search athletes...">
@@ -213,9 +296,37 @@
     const fmt = (n, d = 1) =>
       n.toLocaleString('fi-FI', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+    const NOTICES = {
+      connected: 'Strava connected! Your activities will appear shortly.',
+      denied: 'Strava connection was cancelled.',
+      'missing-scope': 'Please allow access to your activities so they can be counted.',
+      removed: 'Your data has been deleted and Strava has been disconnected.',
+      closed: 'The challenge is over and its data has been deleted, so new connections are closed.',
+      error: 'Something went wrong with Strava, please try again.',
+    };
+    const stravaStatus = new URLSearchParams(location.search).get('strava');
+    if (NOTICES[stravaStatus]) {
+      const notice = document.getElementById('notice');
+      notice.textContent = NOTICES[stravaStatus];
+      notice.style.display = 'block';
+      history.replaceState(null, '', location.pathname);
+    }
+
+    // `until` is exclusive, so the last day shown is the day before it, in Finnish time.
+    function challengeDays(since, until) {
+      const day = (date) =>
+        date.toLocaleDateString('en-US', { timeZone: 'Europe/Helsinki', month: 'long', day: 'numeric', year: 'numeric' });
+      return [day(new Date(since)), day(new Date(new Date(until).getTime() - 1))];
+    }
+
     fetch('/api/stats')
       .then((r) => r.json())
       .then((data) => {
+        if (data.since && data.until) {
+          const [first, last] = challengeDays(data.since, data.until);
+          document.getElementById('challenge-window').textContent = first + ' – ' + last;
+          document.getElementById('privacy-window').textContent = 'between ' + first + ' and ' + last;
+        }
         if (data.error) {
           document.getElementById('km').textContent = '?';
           document.getElementById('updated').textContent = data.error;
@@ -230,9 +341,9 @@
         document.getElementById('progress-text').textContent = fmt(total) + ' / 50 000 km';
         document.getElementById('progress-pct').textContent = fmt(pct) + ' %';
 
-        if (data.lastFetchAttempt) {
+        if (data.lastUpdated) {
           document.getElementById('updated').textContent =
-            'Updated ' + new Date(data.lastFetchAttempt).toLocaleString('fi-FI');
+            'Updated ' + new Date(data.lastUpdated).toLocaleString('fi-FI');
         }
 
         if (data.athletes && data.athletes.length > 0) {
@@ -248,10 +359,16 @@
               if (query && !a.name.toLowerCase().includes(query)) return;
               const row = document.createElement('div');
               row.className = 'athlete-row';
-              row.innerHTML =
-                `<span class="athlete-index">${i + 1}</span>` +
-                `<span class="athlete-name">${a.name}</span>` +
-                `<span class="athlete-km">${fmt(a.totalKm)} km</span>`;
+              for (const [cls, text] of [
+                ['athlete-index', String(i + 1)],
+                ['athlete-name', a.name],
+                ['athlete-km', fmt(a.totalKm) + ' km'],
+              ]) {
+                const span = document.createElement('span');
+                span.className = cls;
+                span.textContent = text;
+                row.appendChild(span);
+              }
               list.appendChild(row);
             });
           }

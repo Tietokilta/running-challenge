@@ -1,0 +1,1 @@
+ALTER TABLE "activities" DROP COLUMN "raw_data";

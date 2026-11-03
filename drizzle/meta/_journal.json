@@ -22,6 +22,27 @@
       "when": 1776117725080,
       "tag": "0002_wise_odin",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793721887775,
+      "tag": "0003_strava_oauth",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793724716602,
+      "tag": "0004_drop_raw_activity_data",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793731478093,
+      "tag": "0005_delete_club_feed_rows",
+      "breakpoints": true
     }
   ]
 }
