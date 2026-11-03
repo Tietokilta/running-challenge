@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { authorizeUrl, type StravaAthlete, type StravaConfig, type TokenSet } from './strava';
 import { displayName, type AthleteRecord, type WebhookEvent } from './sync';
@@ -15,7 +15,13 @@ export interface StravaRoutesDeps {
   onAthleteConnected(athlete: AthleteRecord): void;
   /** Called for each webhook event; must not block the response. */
   onWebhookEvent(event: WebhookEvent): void;
+  deauthorize(accessToken: string): Promise<void>;
+  /** Removes the athlete and all of their activities. */
+  deleteAthlete(id: number): Promise<void>;
 }
+
+type Intent = 'connect' | 'remove';
+const SCOPES: Record<Intent, string> = { connect: 'activity:read', remove: 'read' };
 
 function isWebhookEvent(body: unknown): body is WebhookEvent {
   if (typeof body !== 'object' || body === null) return false;
@@ -38,8 +44,9 @@ export function createStravaRoutes(deps: StravaRoutesDeps) {
     await next();
   });
 
-  routes.get('/connect', (c) => {
-    const state = crypto.randomBytes(24).toString('base64url');
+  const startAuthorization = (c: Context, intent: Intent) => {
+    // The intent is part of the state so a connect authorization cannot be replayed as a removal.
+    const state = `${intent}.${crypto.randomBytes(24).toString('base64url')}`;
     setCookie(c, STATE_COOKIE, state, {
       path: '/api/strava',
       httpOnly: true,
@@ -47,23 +54,21 @@ export function createStravaRoutes(deps: StravaRoutesDeps) {
       sameSite: 'Lax',
       maxAge: 600,
     });
-    return c.redirect(authorizeUrl(config!, state), 302);
+    return c.redirect(authorizeUrl(config!, state, SCOPES[intent]), 302);
+  };
+
+  // Participants must explicitly agree to their name and totals being shown publicly.
+  routes.get('/connect', (c) => {
+    if (c.req.query('consent') !== '1') {
+      return c.text('Please accept that your name and kilometres are shown on the leaderboard.', 400);
+    }
+    return startAuthorization(c, 'connect');
   });
 
-  routes.get('/callback', async (c) => {
-    const expectedState = getCookie(c, STATE_COOKIE);
-    deleteCookie(c, STATE_COOKIE, { path: '/api/strava' });
-    if (!expectedState || c.req.query('state') !== expectedState) {
-      return c.text('Invalid or expired login attempt, please try again.', 400);
-    }
+  routes.get('/remove', (c) => startAuthorization(c, 'remove'));
 
-    if (c.req.query('error')) return c.redirect('/?strava=denied', 302);
-
-    const code = c.req.query('code');
-    const scopes = (c.req.query('scope') ?? '').split(',');
-    if (!code) return c.text('Missing authorization code.', 400);
+  const connect = async (c: Context, code: string, scopes: string[]) => {
     if (!scopes.some((s) => READ_SCOPES.includes(s))) return c.redirect('/?strava=missing-scope', 302);
-
     try {
       const { tokens, athlete } = await deps.exchangeCode(code);
       const record: AthleteRecord = {
@@ -79,6 +84,35 @@ export function createStravaRoutes(deps: StravaRoutesDeps) {
       return c.redirect('/?strava=error', 302);
     }
     return c.redirect('/?strava=connected', 302);
+  };
+
+  const remove = async (c: Context, code: string) => {
+    try {
+      const { tokens, athlete } = await deps.exchangeCode(code);
+      await deps.deleteAthlete(athlete.id);
+      await deps.deauthorize(tokens.accessToken);
+      console.log(`[Strava] Athlete ${athlete.id} removed their data`);
+    } catch (err) {
+      console.error('[Strava] Removing athlete failed:', err instanceof Error ? err.message : err);
+      return c.redirect('/?strava=error', 302);
+    }
+    return c.redirect('/?strava=removed', 302);
+  };
+
+  routes.get('/callback', async (c) => {
+    const expectedState = getCookie(c, STATE_COOKIE);
+    deleteCookie(c, STATE_COOKIE, { path: '/api/strava' });
+    if (!expectedState || c.req.query('state') !== expectedState) {
+      return c.text('Invalid or expired login attempt, please try again.', 400);
+    }
+
+    if (c.req.query('error')) return c.redirect('/?strava=denied', 302);
+
+    const code = c.req.query('code');
+    if (!code) return c.text('Missing authorization code.', 400);
+    const intent = expectedState.split('.')[0];
+    if (intent === 'remove') return remove(c, code);
+    return connect(c, code, (c.req.query('scope') ?? '').split(','));
   });
 
   // Subscription validation, see https://developers.strava.com/docs/webhooks/

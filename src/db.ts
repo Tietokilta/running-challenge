@@ -59,7 +59,6 @@ export async function upsertActivity(record: ActivityRecord): Promise<void> {
     km: String(record.km),
     sportType: record.sportType,
     startDate: record.startDate,
-    rawData: record.rawData,
     updatedAt: new Date(),
   };
   await db
@@ -70,6 +69,26 @@ export async function upsertActivity(record: ActivityRecord): Promise<void> {
 
 export async function deleteActivity(stravaActivityId: number): Promise<void> {
   await db.delete(activities).where(eq(activities.stravaActivityId, stravaActivityId));
+}
+
+export async function listStoredActivityIds(athleteId: number): Promise<number[]> {
+  const rows = await db
+    .select({ id: activities.stravaActivityId })
+    .from(activities)
+    .where(eq(activities.athleteId, athleteId));
+  return rows.flatMap((r) => (r.id === null ? [] : [r.id]));
+}
+
+export async function listAthletes(): Promise<AthleteRecord[]> {
+  return db.select().from(athletes);
+}
+
+/** Deletes every athlete, token and activity, including rows from the earlier club feed. */
+export async function purgeAllStravaData(): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.delete(activities);
+    await tx.delete(athletes);
+  });
 }
 
 export async function getStats() {

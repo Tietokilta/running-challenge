@@ -4,9 +4,9 @@ const API_BASE = 'https://www.strava.com/api/v3';
 export class StravaApiError extends Error {
   constructor(
     readonly status: number,
-    message: string,
+    readonly body: string,
   ) {
-    super(`Strava API ${status}: ${message}`);
+    super(`Strava API ${status}: ${body}`);
   }
 }
 
@@ -87,13 +87,13 @@ function toTokenSet(data: TokenResponse): TokenSet {
   };
 }
 
-export function authorizeUrl(config: StravaConfig, state: string): string {
+export function authorizeUrl(config: StravaConfig, state: string, scope: string): string {
   const url = new URL(`${OAUTH_BASE}/authorize`);
   url.searchParams.set('client_id', config.clientId);
   url.searchParams.set('redirect_uri', config.publicUrl + callbackPath);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('approval_prompt', 'auto');
-  url.searchParams.set('scope', 'activity:read');
+  url.searchParams.set('scope', scope);
   url.searchParams.set('state', state);
   return url.toString();
 }
@@ -120,6 +120,14 @@ export function createStravaClient(config: Pick<StravaConfig, 'clientId' | 'clie
 
     async refreshTokens(refreshToken: string): Promise<TokenSet> {
       return toTokenSet(await tokenRequest({ refresh_token: refreshToken, grant_type: 'refresh_token' }));
+    },
+
+    /** Revokes the app's access for the athlete who owns the token. */
+    async deauthorize(accessToken: string): Promise<void> {
+      await request(`${OAUTH_BASE}/deauthorize`, {
+        method: 'POST',
+        body: new URLSearchParams({ access_token: accessToken }),
+      });
     },
 
     async getActivity(accessToken: string, id: number): Promise<StravaActivity> {

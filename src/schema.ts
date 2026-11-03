@@ -1,4 +1,4 @@
-import { bigint, jsonb, numeric, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { bigint, numeric, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 
 /** Athletes who have connected their Strava account. */
 export const athletes = pgTable('athletes', {
@@ -21,7 +21,6 @@ export const activities = pgTable('activities', {
   km: numeric('km', { precision: 10, scale: 4 }).notNull().default('0'),
   firstSeen: timestamp('first_seen', { withTimezone: true }).notNull().defaultNow(),
   sportType: text('sport_type'),
-  rawData: jsonb('raw_data'),
   stravaActivityId: bigint('strava_activity_id', { mode: 'number' }).unique(),
   athleteId: bigint('athlete_id', { mode: 'number' }).references(() => athletes.id, { onDelete: 'cascade' }),
   startDate: timestamp('start_date', { withTimezone: true }),

@@ -14,6 +14,8 @@ function setup(overrides: Partial<StravaRoutesDeps> = {}) {
   const saved: AthleteRecord[] = [];
   const connected: AthleteRecord[] = [];
   const events: WebhookEvent[] = [];
+  const deauthorized: string[] = [];
+  const deleted: number[] = [];
   const deps: StravaRoutesDeps = {
     config,
     exchangeCode: async () => ({
@@ -29,13 +31,19 @@ function setup(overrides: Partial<StravaRoutesDeps> = {}) {
     onWebhookEvent: (e) => {
       events.push(e);
     },
+    deauthorize: async (token) => {
+      deauthorized.push(token);
+    },
+    deleteAthlete: async (id) => {
+      deleted.push(id);
+    },
     ...overrides,
   };
-  return { app: createStravaRoutes(deps), saved, connected, events };
+  return { app: createStravaRoutes(deps), saved, connected, events, deauthorized, deleted };
 }
 
-async function startConnect(app: ReturnType<typeof setup>['app']) {
-  const res = await app.request('/connect');
+async function startConnect(app: ReturnType<typeof setup>['app'], path = '/connect?consent=1') {
+  const res = await app.request(path);
   const location = new URL(res.headers.get('location')!);
   const cookie = res.headers.get('set-cookie')!.split(';')[0];
   return { res, location, cookie, state: location.searchParams.get('state')! };
@@ -51,6 +59,34 @@ test('connect redirects to Strava with read scope and a state bound to a cookie'
   assert.equal(location.searchParams.get('scope'), 'activity:read');
   assert.ok(state.length >= 32);
   assert.ok(cookie.endsWith(state));
+});
+
+test('connect requires explicit consent to the public leaderboard', async () => {
+  const { app } = setup();
+  const res = await app.request('/connect');
+  assert.equal(res.status, 400);
+  assert.equal(res.headers.get('location'), null);
+});
+
+test('remove flow deletes the athlete and revokes the app without storing anything', async () => {
+  const { app, saved, connected, deauthorized, deleted } = setup();
+  const { location, cookie, state } = await startConnect(app, '/remove');
+  assert.equal(location.searchParams.get('scope'), 'read');
+  const res = await app.request(`/callback?code=c&scope=read&state=${state}`, { headers: { cookie } });
+  assert.equal(res.headers.get('location'), '/?strava=removed');
+  assert.deepEqual(deleted, [42]);
+  assert.deepEqual(deauthorized, ['a']);
+  assert.equal(saved.length, 0);
+  assert.equal(connected.length, 0);
+});
+
+test('a connect state cannot be replayed as a remove and vice versa', async () => {
+  const { app, deleted } = setup();
+  const { cookie } = await startConnect(app);
+  const { state: removeState } = await startConnect(app, '/remove');
+  const res = await app.request(`/callback?code=c&scope=read&state=${removeState}`, { headers: { cookie } });
+  assert.equal(res.status, 400);
+  assert.deepEqual(deleted, []);
 });
 
 test('callback stores the athlete and starts the backfill', async () => {
@@ -124,5 +160,5 @@ test('webhook events are acknowledged and handed off', async () => {
 
 test('routes report unavailable when Strava is not configured', async () => {
   const { app } = setup({ config: null });
-  assert.equal((await app.request('/connect')).status, 503);
+  assert.equal((await app.request('/connect?consent=1')).status, 503);
 });

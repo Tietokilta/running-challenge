@@ -14,13 +14,14 @@ npm run dev
 
 ## How activities are collected
 
-Participants connect their own Strava account on the front page (`Connect with Strava`). The
-app requests the `activity:read` scope, stores the athlete's tokens, and imports their
-activities since the challenge start. After that, Strava pushes a webhook event whenever the
-athlete creates, edits or deletes an activity, and the app re-reads that activity with the
-athlete's token. Webhook events are not trusted on their own: an activity is removed only when
-Strava returns 404 for it, and an athlete is removed (with all their activities) only when
-their tokens have been revoked.
+Participants connect their own Strava account on the front page after ticking a consent box
+for their first name, last initial and km totals to be shown publicly. The app requests the
+`activity:read` scope, stores the athlete's tokens, and imports their activities in the
+challenge window. After that, Strava pushes a webhook event whenever the athlete creates,
+edits or deletes an activity, and the app re-reads that activity with the athlete's token.
+Webhook events are not trusted on their own: an activity is removed only when Strava returns
+404 for it, and an athlete is removed (with all their activities) only when Strava rejects
+their refresh token as revoked.
 
 On startup the app creates the Strava webhook subscription for `PUBLIC_URL` if the API
 application has none. Strava allows one subscription per application, so a development
@@ -28,6 +29,25 @@ instance should use its own Strava API application.
 
 Activities count toward the challenge by their Strava start time. Rows collected by the
 earlier club-feed poller have no start time and count by when they were first seen.
+
+## Strava data handling
+
+The app follows the [Strava API Policy](https://www.strava.com/legal/api_policy) as closely as
+the public leaderboard allows:
+
+- Only the distance, sport type and start time of activities inside the challenge window are
+  stored, with the athlete's first name, last initial and tokens.
+- A daily job re-reads every athlete's activities and removes ones that were deleted or made
+  private, in case a webhook event was missed.
+- **All Strava data, including club-feed rows, is deleted 7 days after `CHALLENGE_END`**
+  (`RETENTION_AFTER_END_MS` in `src/sync.ts`). Update the dates in `src/constants.ts` before
+  each challenge.
+- "Remove my data" on the front page deletes the athlete's data and revokes the app's access
+  after the athlete signs in to Strava; revoking access in Strava's settings has the same
+  effect through the webhook.
+
+Showing other participants' data publicly is restricted by the policy (sections 2.3 and 6.1);
+get Strava's written approval for the leaderboard before launching a challenge.
 
 ### Strava API application settings
 
@@ -59,7 +79,8 @@ The Strava integration is disabled (and its routes return 503) unless `CLIENT_ID
 | Endpoint | Description |
 |---|---|
 | `GET /api/stats` | Returns cumulative km totals per athlete and category |
-| `GET /api/strava/connect` | Starts the Strava OAuth flow |
+| `GET /api/strava/connect?consent=1` | Starts the Strava OAuth flow |
+| `GET /api/strava/remove` | Signs the athlete in to Strava, deletes their data and revokes access |
 | `GET /api/strava/callback` | Strava OAuth redirect target |
 | `GET, POST /api/strava/webhook` | Strava webhook validation and events |
 

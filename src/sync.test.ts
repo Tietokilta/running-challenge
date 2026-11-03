@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { StravaApiError, type StravaActivity, type TokenSet } from './strava';
 import {
   backfillAthlete,
+  reconcileAthlete,
+  runMaintenance,
   displayName,
   handleWebhookEvent,
   type AthleteRecord,
@@ -11,6 +13,9 @@ import {
 } from './sync';
 
 const NOW = new Date('2026-04-10T12:00:00Z');
+// Strava's response to refreshing a revoked token.
+const REVOKED_BODY =
+  '{"message":"Bad Request","errors":[{"resource":"RefreshToken","field":"refresh_token","code":"invalid"}]}';
 
 function athlete(overrides: Partial<AthleteRecord> = {}): AthleteRecord {
   return {
@@ -47,9 +52,12 @@ function fakeDeps(opts: {
   const deletedAthletes: number[] = [];
   const savedTokens: Array<{ athleteId: number; tokens: TokenSet }> = [];
   const usedTokens: string[] = [];
+  const stored = new Set<number>();
+  let purged = 0;
 
   const deps: SyncDeps = {
     now: () => NOW,
+    window: { start: new Date('2026-04-01T00:00:00Z'), end: new Date('2026-06-01T00:00:00Z') },
     findAthlete: async (id) => athletes.get(id) ?? null,
     saveTokens: async (athleteId, tokens) => {
       savedTokens.push({ athleteId, tokens });
@@ -59,9 +67,16 @@ function fakeDeps(opts: {
     },
     upsertActivity: async (record) => {
       upserted.push(record);
+      stored.add(record.stravaActivityId);
     },
     deleteActivity: async (id) => {
       deletedActivities.push(id);
+      stored.delete(id);
+    },
+    listStoredActivityIds: async () => [...stored],
+    listAthletes: async () => [...athletes.values()],
+    purgeAllStravaData: async () => {
+      purged++;
     },
     strava: {
       refreshTokens: opts.refresh ?? (async () => ({
@@ -81,7 +96,16 @@ function fakeDeps(opts: {
       },
     },
   };
-  return { deps, upserted, deletedActivities, deletedAthletes, savedTokens, usedTokens };
+  return {
+    deps,
+    upserted,
+    deletedActivities,
+    deletedAthletes,
+    savedTokens,
+    usedTokens,
+    stored,
+    purgedCount: () => purged,
+  };
 }
 
 function event(overrides: Partial<WebhookEvent>): WebhookEvent {
@@ -159,7 +183,7 @@ test('deauthorization deletes the athlete when their tokens are revoked', async 
   const f = fakeDeps({
     athletes: [athlete()],
     refresh: async () => {
-      throw new StravaApiError(400, 'Bad Request');
+      throw new StravaApiError(400, REVOKED_BODY);
     },
   });
   await handleWebhookEvent(
@@ -192,6 +216,77 @@ test('backfill records only the athlete own activities', async () => {
     athletes: [athlete()],
     activities: { 100: activity(), 101: activity({ id: 101, athlete: { id: 2 } }) },
   });
-  await backfillAthlete(athlete(), new Date('2026-04-01T00:00:00Z'), f.deps);
+  await backfillAthlete(athlete(), f.deps);
   assert.deepEqual(f.upserted.map((r) => r.stravaActivityId), [100]);
+});
+
+test('only the fields needed for the leaderboard are stored', async () => {
+  const f = fakeDeps({
+    athletes: [athlete()],
+    activities: { 100: activity({ name: 'Morning run', map: { summary_polyline: 'abc' } }) },
+  });
+  await handleWebhookEvent(event({}), f.deps);
+  assert.deepEqual(Object.keys(f.upserted[0]).sort(), [
+    'athleteId',
+    'athleteName',
+    'km',
+    'sportType',
+    'startDate',
+    'stravaActivityId',
+  ]);
+});
+
+test('activities outside the challenge window are not stored, and are removed if they were', async () => {
+  const f = fakeDeps({
+    athletes: [athlete()],
+    activities: { 100: activity({ start_date: '2026-03-31T20:00:00Z' }) },
+  });
+  await handleWebhookEvent(event({ aspect_type: 'update' }), f.deps);
+  assert.equal(f.upserted.length, 0);
+  assert.deepEqual(f.deletedActivities, [100]);
+});
+
+test('reconcile removes stored activities that Strava no longer lists', async () => {
+  const f = fakeDeps({ athletes: [athlete()], activities: { 100: activity() } });
+  f.stored.add(100);
+  f.stored.add(555);
+  await reconcileAthlete(athlete(), f.deps);
+  assert.deepEqual(f.deletedActivities, [555]);
+  assert.deepEqual([...f.stored].sort(), [100]);
+});
+
+test('maintenance reconciles every athlete even if one fails', async () => {
+  const f = fakeDeps({
+    athletes: [athlete({ id: 1 }), athlete({ id: 2, accessToken: 'access-2' })],
+    activities: { 100: activity() },
+  });
+  const list = f.deps.strava.listActivitiesSince;
+  f.deps.strava.listActivitiesSince = async (token, since) => {
+    if (token === 'access-1') throw new StravaApiError(503, 'Service Unavailable');
+    return list(token, since);
+  };
+  await runMaintenance(f.deps, new Date('2026-05-01T00:00:00Z'));
+  assert.deepEqual(f.usedTokens, ['access-2']);
+  assert.equal(f.purgedCount(), 0);
+});
+
+test('maintenance purges all Strava data after the retention deadline', async () => {
+  const f = fakeDeps({ athletes: [athlete()], activities: { 100: activity() } });
+  await runMaintenance(f.deps, new Date('2026-06-08T00:00:01Z'));
+  assert.equal(f.purgedCount(), 1);
+  assert.equal(f.usedTokens.length, 0);
+});
+
+test('a rejected app credential is not mistaken for a revoked athlete', async () => {
+  const f = fakeDeps({
+    athletes: [athlete({ expiresAt: new Date(NOW.getTime() - 1000) })],
+    refresh: async () => {
+      throw new StravaApiError(
+        401,
+        '{"message":"Authorization Error","errors":[{"resource":"Application","field":"","code":"invalid"}]}',
+      );
+    },
+  });
+  await assert.rejects(handleWebhookEvent(event({}), f.deps));
+  assert.deepEqual(f.deletedAthletes, []);
 });

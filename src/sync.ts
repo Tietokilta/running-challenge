@@ -15,7 +15,6 @@ export interface ActivityRecord {
   km: number;
   sportType?: string;
   startDate?: Date;
-  rawData: Record<string, unknown>;
 }
 
 /** Strava webhook event, see https://developers.strava.com/docs/webhooks/ */
@@ -29,30 +28,31 @@ export interface WebhookEvent {
   updates?: Record<string, string>;
 }
 
+export interface ChallengeWindow {
+  start: Date;
+  end: Date;
+}
+
+/** Strava data is kept only until the results have been published. */
+export const RETENTION_AFTER_END_MS = 7 * 24 * 3600_000;
+
 export interface SyncDeps {
   now(): Date;
+  window: ChallengeWindow;
   findAthlete(id: number): Promise<AthleteRecord | null>;
   saveTokens(athleteId: number, tokens: TokenSet): Promise<void>;
   /** Removes the athlete and all of their activities. */
   deleteAthlete(id: number): Promise<void>;
   upsertActivity(record: ActivityRecord): Promise<void>;
   deleteActivity(stravaActivityId: number): Promise<void>;
+  listStoredActivityIds(athleteId: number): Promise<number[]>;
+  listAthletes(): Promise<AthleteRecord[]>;
+  /** Deletes all athletes, tokens and activities. */
+  purgeAllStravaData(): Promise<void>;
   strava: Pick<StravaClient, 'refreshTokens' | 'getActivity' | 'listActivitiesSince'>;
 }
 
 const TOKEN_EXPIRY_MARGIN_MS = 5 * 60_000;
-
-// Bulky per-activity detail that is not needed for the leaderboard.
-const OMITTED_RAW_FIELDS = new Set([
-  'map',
-  'segment_efforts',
-  'splits_metric',
-  'splits_standard',
-  'laps',
-  'best_efforts',
-  'photos',
-  'stats_visibility',
-]);
 
 /** Shows athletes the same way Strava's club feed does: first name and last initial. */
 export function displayName(firstname?: string, lastname?: string): string {
@@ -69,12 +69,22 @@ export function toActivityRecord(activity: StravaActivity, athlete: AthleteRecor
     km: (activity.distance ?? 0) / 1000,
     sportType: activity.sport_type ?? activity.type,
     startDate: activity.start_date ? new Date(activity.start_date) : undefined,
-    rawData: Object.fromEntries(Object.entries(activity).filter(([key]) => !OMITTED_RAW_FIELDS.has(key))),
   };
 }
 
+function isInWindow(activity: StravaActivity, window: ChallengeWindow): boolean {
+  if (!activity.start_date) return false;
+  const start = new Date(activity.start_date);
+  return start >= window.start && start < window.end;
+}
+
+/**
+ * Strava answers a refresh with a revoked token with 400 and a RefreshToken error. Other
+ * failures, such as a wrong client secret, must not be mistaken for revocation or every
+ * athlete would be deleted.
+ */
 function isRevoked(err: unknown): boolean {
-  return err instanceof StravaApiError && (err.status === 400 || err.status === 401);
+  return err instanceof StravaApiError && err.status === 400 && err.body.includes('"RefreshToken"');
 }
 
 function isGone(err: unknown): boolean {
@@ -131,15 +141,62 @@ export async function handleWebhookEvent(event: WebhookEvent, deps: SyncDeps): P
     console.warn(`[Sync] Activity ${activity.id} does not belong to athlete ${athlete.id}, ignoring`);
     return;
   }
-  await deps.upsertActivity(toActivityRecord(activity, athlete));
+  if (isInWindow(activity, deps.window)) {
+    await deps.upsertActivity(toActivityRecord(activity, athlete));
+  } else {
+    await deps.deleteActivity(activity.id);
+  }
 }
 
-/** Imports the athlete's existing activities since the given date. */
-export async function backfillAthlete(athlete: AthleteRecord, since: Date, deps: SyncDeps): Promise<number> {
+async function listOwnActivitiesInWindow(token: string, athlete: AthleteRecord, deps: SyncDeps) {
+  const activities = await deps.strava.listActivitiesSince(token, deps.window.start);
+  return activities.filter((a) => a.athlete?.id === athlete.id && isInWindow(a, deps.window));
+}
+
+/** Imports the athlete's existing activities in the challenge window. */
+export async function backfillAthlete(athlete: AthleteRecord, deps: SyncDeps): Promise<number> {
   const token = await accessTokenFor(athlete, deps);
   if (!token) return 0;
-  const activities = await deps.strava.listActivitiesSince(token, since);
-  const own = activities.filter((a) => a.athlete?.id === athlete.id);
+  const own = await listOwnActivitiesInWindow(token, athlete, deps);
   for (const activity of own) await deps.upsertActivity(toActivityRecord(activity, athlete));
   return own.length;
+}
+
+/**
+ * Re-reads the athlete's activities and drops stored ones Strava no longer returns, in case a
+ * webhook event for a deletion or privacy change was missed.
+ */
+export async function reconcileAthlete(athlete: AthleteRecord, deps: SyncDeps): Promise<void> {
+  const token = await accessTokenFor(athlete, deps);
+  if (!token) return;
+  const own = await listOwnActivitiesInWindow(token, athlete, deps);
+  const current = new Set(own.map((a) => a.id));
+  for (const id of await deps.listStoredActivityIds(athlete.id)) {
+    if (!current.has(id)) await deps.deleteActivity(id);
+  }
+  for (const activity of own) await deps.upsertActivity(toActivityRecord(activity, athlete));
+}
+
+/** Deletes all Strava data once the retention period after the challenge is over. */
+export async function purgeIfExpired(
+  deps: Pick<SyncDeps, 'window' | 'purgeAllStravaData'>,
+  now: Date,
+): Promise<boolean> {
+  if (now.getTime() < deps.window.end.getTime() + RETENTION_AFTER_END_MS) return false;
+  await deps.purgeAllStravaData();
+  console.log('[Sync] Retention period over, all Strava data purged');
+  return true;
+}
+
+/** Daily job: purge everything once the retention period is over, otherwise reconcile. */
+export async function runMaintenance(deps: SyncDeps, now = deps.now()): Promise<void> {
+  if (await purgeIfExpired(deps, now)) return;
+  if (now < deps.window.start) return;
+  for (const athlete of await deps.listAthletes()) {
+    try {
+      await reconcileAthlete(athlete, deps);
+    } catch (err) {
+      console.error(`[Sync] Reconciling athlete ${athlete.id} failed:`, err instanceof Error ? err.message : err);
+    }
+  }
 }
