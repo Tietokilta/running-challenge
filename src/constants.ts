@@ -1,6 +1,6 @@
-// Finnish time (EEST, UTC+3) — challenge runs April 1 00:00 to June 1 00:00
-export const CHALLENGE_START = new Date('2026-04-01T00:00:00+03:00');
-export const CHALLENGE_END = new Date('2026-06-01T00:00:00+03:00');
+// Finnish time (EET, UTC+2) — challenge runs November 3 00:00 to January 1 00:00
+export const CHALLENGE_START = new Date('2026-11-03T00:00:00+02:00');
+export const CHALLENGE_END = new Date('2027-01-01T00:00:00+02:00');
 
 export const ACTIVITY_CATEGORIES: Record<string, string> = {
   // Running
